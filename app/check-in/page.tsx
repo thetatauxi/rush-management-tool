@@ -120,7 +120,7 @@ export default function CheckIn() {
   // Event Selection Screen
   if (kioskMode === "event-selection") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-linear-to-br from-red-300 to-yellow-500/50 font-sans p-4">
+      <div className="flex min-h-screen items-center justify-center font-sans p-4">
         <main className="bg-zinc-50 rounded-lg p-6 w-full md:w-1/2 max-w-2xl">
           <h1 className="text-4xl font-mono font-bold underline decoration-red-300 mb-4">
             Check In PNMs
@@ -168,7 +168,7 @@ export default function CheckIn() {
 
   // Scanning Screen
   return (
-    <div className="flex min-h-screen items-center justify-center bg-linear-to-br from-red-300 to-yellow-500/50 font-sans p-4">
+    <div className="flex min-h-screen items-center justify-center font-sans p-4">
       <main className="relative bg-zinc-50 rounded-lg p-6 w-full md:w-1/2 max-w-2xl">
         <div className="mb-4">
           <h1 className="text-4xl font-mono font-bold underline decoration-red-300 mb-6">

@@ -46,7 +46,7 @@ export default function Login() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-linear-to-br from-red-300 to-yellow-500/50 font-sans">
+    <div className="flex min-h-screen items-center justify-center font-sans">
       <main className="bg-zinc-50 rounded-lg p-6 w-full md:w-1/2">
         <h1 className="text-4xl font-mono font-bold underline decoration-red-300 mb-4">
           Login

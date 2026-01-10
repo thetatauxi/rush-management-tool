@@ -19,7 +19,7 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-.kiosk-toast {
+.toast {
   min-height: 3.5rem;
   padding: 1.25rem 1.5rem;
   border-radius: 1.5rem;
@@ -32,23 +32,23 @@ body {
   box-shadow: 0 18px 35px rgba(15, 23, 42, 0.6);
 }
 
-.kiosk-toast__title {
+.toast__title {
   font-size: 1.25rem;
   font-weight: 700;
   text-shadow: 0 0 12px rgba(248, 113, 113, 0.7);
 }
 
-.kiosk-toast__description {
+.toast__description {
   font-size: 0.95rem;
   color: rgba(255, 255, 255, 0.85);
 }
 
-.kiosk-toast__close-button {
+.toast__close-button {
   color: #fff;
   opacity: 0.9;
 }
 
-.kiosk-toast .sonner-toast__icon {
+.toast .sonner-toast__icon {
   width: 2.5rem;
   height: 2.5rem;
   padding: 0.25rem;
