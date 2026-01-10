@@ -221,12 +221,12 @@ export default function CheckIn() {
       {/* Loading Overlay */}
       {isLoading && (
         <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-white/90 backdrop-blur-sm border-2 border-red-500/70">
-          <div className="flex flex-col items-center gap-4 px-6 text-center">
-            <div className="h-16 w-16 border-4 border-red-600 border-t-transparent rounded-full animate-spin" />
-            <p className="text-2xl font-semibold text-red-700">
-              Sending check-in...
+          <div className="flex flex-col items-center gap-6 px-6 text-center">
+            <div className="h-24 w-24 border-4 border-red-600 border-t-transparent rounded-full animate-spin" />
+            <p className="text-4xl font-bold text-red-700">
+              Processing check-in...
             </p>
-            <p className="text-sm text-zinc-600">
+            <p className="text-xl text-zinc-600">
               Please stay here—this may take a few seconds.
             </p>
           </div>
