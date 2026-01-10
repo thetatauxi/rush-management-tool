@@ -72,7 +72,7 @@ Open [http://localhost:3000](http://localhost:3000).
 
 Rush events are defined in `lib/pnmConstants.ts`. Update `EVENT_HEADERS` to match your rush schedule—this must stay in sync with your Google Apps Script backend. 
 
-Xi Chapter's App Script is private for security reasons (we want to ensure PNMs don't cheat the system, we're all engineers after all), but if you're apart of another chapter who's interested, we'll be happy to share specifics.
+Xi Chapter's App Script is private for security reasons, but if you're apart of another chapter who's interested, we'll be happy to share specifics. This repo shouldn't be and is not an example of a "secure" app. It exists solely as a small-scale solution.
 
 ## Deployment
 
