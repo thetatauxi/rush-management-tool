@@ -1,5 +1,5 @@
 import { ImageResponse } from "@vercel/og";
-import { EVENT_HEADERS, StudentRecord } from "@/lib/pnmConstants";
+import { EVENT_HEADERS, PNMRecord } from "@/lib/pnmConstants";
 
 export const runtime = "edge";
 
@@ -54,7 +54,7 @@ function XIcon() {
 
 export async function POST(request: Request) {
   try {
-    const { record } = (await request.json()) as { record: StudentRecord };
+    const { record } = (await request.json()) as { record: PNMRecord };
 
     if (!record) {
       return new Response(JSON.stringify({ error: "Missing record" }), {

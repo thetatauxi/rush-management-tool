@@ -6,7 +6,7 @@ export const EVENT_HEADERS = [
   "Event 5: Professional Workshop",
 ];
 
-export type StudentRecord = {
+export type PNMRecord = {
   Name: {
     text: string;
     imageBase64: string | null;

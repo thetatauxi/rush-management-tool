@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import Fuse from "fuse.js";
 
-type Student = {
+type PNM = {
   name: string;
   id: string;
 };
@@ -20,7 +20,7 @@ type ProcessingStep =
 
 const STEP_LABELS: Record<ProcessingStep, string> = {
   idle: "",
-  fetching: "Fetching student record...",
+  fetching: "Fetching PNM record...",
   generating: "Generating image...",
   downloading: "Downloading...",
   done: "Complete!",
@@ -30,8 +30,8 @@ export default function Summary() {
   const router = useRouter();
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Student list state
-  const [students, setStudents] = useState<Student[]>([]);
+  // PNM list state
+  const [pnms, setPnms] = useState<PNM[]>([]);
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
 
@@ -42,16 +42,16 @@ export default function Summary() {
 
   // Processing state
   const [processingStep, setProcessingStep] = useState<ProcessingStep>("idle");
-  const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [selectedPNM, setSelectedPNM] = useState<PNM | null>(null);
 
   // Fuse.js instance for fuzzy search
   const fuse = useMemo(() => {
-    return new Fuse(students, {
+    return new Fuse(pnms, {
       keys: ["name"],
       threshold: 0.3,
       includeScore: true,
     });
-  }, [students]);
+  }, [pnms]);
 
   // Filtered results
   const searchResults = useMemo(() => {
@@ -60,7 +60,7 @@ export default function Summary() {
     return results.map((r) => r.item);
   }, [fuse, searchQuery]);
 
-  // Fetch student list on mount
+  // Fetch PNM list on mount
   useEffect(() => {
     const password = localStorage.getItem("password");
     if (!password) {
@@ -68,7 +68,7 @@ export default function Summary() {
       return;
     }
 
-    async function fetchStudents() {
+    async function fetchPnms() {
       try {
         const response = await fetch("/api/proxy", {
           method: "POST",
@@ -83,23 +83,23 @@ export default function Summary() {
 
         if (data.ok && data.names) {
           // Transform { name: id } object to array
-          const studentList = Object.entries(data.names).map(([name, id]) => ({
+          const pnmList = Object.entries(data.names).map(([name, id]) => ({
             name,
             id: id as string,
           }));
-          setStudents(studentList);
+          setPnms(pnmList);
         } else {
-          setListError(data.error || "Failed to load student list");
+          setListError(data.error || "Failed to load PNM list");
         }
       } catch (err) {
-        console.error("Failed to fetch students:", err);
+        console.error("Failed to fetch PNMs:", err);
         setListError("Failed to connect to server");
       } finally {
         setIsLoadingList(false);
       }
     }
 
-    fetchStudents();
+    fetchPnms();
   }, [router]);
 
   // Handle keyboard navigation in dropdown
@@ -117,16 +117,16 @@ export default function Summary() {
     } else if (e.key === "Enter") {
       e.preventDefault();
       if (searchResults[selectedIndex]) {
-        handleSelectStudent(searchResults[selectedIndex]);
+        handleSelectPNM(searchResults[selectedIndex]);
       }
     } else if (e.key === "Escape") {
       setShowDropdown(false);
     }
   };
 
-  // Handle student selection
-  const handleSelectStudent = async (student: Student) => {
-    setSelectedStudent(student);
+  // Handle PNM selection
+  const handleSelectPNM = async (pnm: PNM) => {
+    setSelectedPNM(pnm);
     setSearchQuery("");
     setShowDropdown(false);
     setProcessingStep("fetching");
@@ -144,7 +144,7 @@ export default function Summary() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "fetchById",
-          idNumber: student.id,
+          idNumber: pnm.id,
           password: password,
         }),
       });
@@ -152,7 +152,7 @@ export default function Summary() {
       const recordData = await recordResponse.json();
 
       if (!recordData.ok) {
-        throw new Error(recordData.error || "Failed to fetch student record");
+        throw new Error(recordData.error || "Failed to fetch PNM record");
       }
 
       setProcessingStep("generating");
@@ -174,25 +174,25 @@ export default function Summary() {
       const blob = await imageResponse.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
-      link.download = `${student.name.replace(/\s+/g, "_")}_summary.png`;
+      link.download = `${pnm.name.replace(/\s+/g, "_")}_summary.png`;
       link.href = url;
       link.click();
       URL.revokeObjectURL(url);
 
       setProcessingStep("done");
-      toast.success(`Downloaded summary for ${student.name}`);
+      toast.success(`Downloaded summary for ${pnm.name}`);
 
       // Reset after short delay
       setTimeout(() => {
         setProcessingStep("idle");
-        setSelectedStudent(null);
+        setSelectedPNM(null);
         searchInputRef.current?.focus();
       }, 1500);
     } catch (err) {
       console.error("Processing error:", err);
       toast.error(err instanceof Error ? err.message : "An error occurred");
       setProcessingStep("idle");
-      setSelectedStudent(null);
+      setSelectedPNM(null);
     }
   };
 
@@ -211,7 +211,7 @@ export default function Summary() {
           </h1>
           <div className="flex flex-col items-center gap-4 py-8">
             <div className="h-12 w-12 border-4 border-red-600 border-t-transparent rounded-full animate-spin" />
-            <p className="text-gray-600">Loading student list...</p>
+            <p className="text-gray-600">Loading PNM list...</p>
           </div>
         </main>
       </div>
@@ -281,19 +281,19 @@ export default function Summary() {
           {/* Dropdown */}
           {showDropdown && searchResults.length > 0 && !isProcessing && (
             <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-64 overflow-y-auto">
-              {searchResults.map((student, index) => (
+              {searchResults.map((pnm, index) => (
                 <button
-                  key={student.id}
+                  key={pnm.id}
                   type="button"
                   className={`w-full text-left px-4 py-2 hover:bg-red-50 transition-colors ${
                     index === selectedIndex ? "bg-red-100" : ""
                   }`}
-                  onMouseDown={() => handleSelectStudent(student)}
+                  onMouseDown={() => handleSelectPNM(pnm)}
                   onMouseEnter={() => setSelectedIndex(index)}
                 >
-                  <span className="font-medium">{student.name}</span>
+                  <span className="font-medium">{pnm.name}</span>
                   <span className="text-gray-500 text-sm ml-2">
-                    ({student.id})
+                    ({pnm.id})
                   </span>
                 </button>
               ))}
@@ -306,21 +306,21 @@ export default function Summary() {
             searchResults.length === 0 &&
             !isProcessing && (
               <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg p-4 text-gray-500 text-center">
-                No students found matching &quot;{searchQuery}&quot;
+                No PNMs found matching &quot;{searchQuery}&quot;
               </div>
             )}
         </div>
 
         {/* Status Bar */}
-        {(isProcessing || processingStep === "done") && selectedStudent && (
+        {(isProcessing || processingStep === "done") && selectedPNM && (
           <div className="bg-gray-100 rounded-lg p-4 mb-6">
             <p className="font-medium mb-3">
               Processing:{" "}
-              <span className="text-red-700">{selectedStudent.name}</span>
+              <span className="text-red-700">{selectedPNM.name}</span>
             </p>
             <div className="space-y-2">
               <StatusStep
-                label="Fetching student record"
+                label="Fetching PNM record"
                 status={getStepStatus("fetching", processingStep)}
               />
               <StatusStep
@@ -335,10 +335,10 @@ export default function Summary() {
           </div>
         )}
 
-        {/* Student count */}
+        {/* PNM count */}
         {processingStep === "idle" && (
           <p className="text-sm text-gray-500 mb-8">
-            {students.length} students loaded
+            {pnms.length} PNMs loaded
           </p>
         )}
 
