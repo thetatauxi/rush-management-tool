@@ -73,7 +73,10 @@ export default function Summary() {
         const response = await fetch("/api/proxy", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "fetchAllNames" }),
+          body: JSON.stringify({ 
+            action: "fetchAllNames",
+            password: password,
+          }),
         });
 
         const data = await response.json();
@@ -130,12 +133,19 @@ export default function Summary() {
 
     try {
       // Step 1: Fetch full record
+      const password = localStorage.getItem("password");
+      if (!password) {
+        router.push("/login");
+        return;
+      }
+
       const recordResponse = await fetch("/api/proxy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "fetchById",
           idNumber: student.id,
+          password: password,
         }),
       });
 

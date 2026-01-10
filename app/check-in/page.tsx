@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { appendToLocalStorageCsv } from "@/lib/localStorageCsv";
 import { EVENT_HEADERS } from "@/lib/pnmConstants";
 
@@ -72,6 +73,7 @@ export default function CheckIn() {
           action: "check-in",
           idNumber: sanitizedIdNumber,
           eventType: eventType,
+          password: password,
         }),
       });
 
@@ -91,11 +93,11 @@ export default function CheckIn() {
         }, 2000);
       } else {
         // Show error, but keep in scanning mode
-        alert(data.error || "Failed to check in");
+        toast.error(data.error || "Failed to check in");
       }
     } catch (err) {
       console.error("Check-in error:", err);
-      alert("Failed to connect to server. Please try again.");
+      toast.error("Failed to connect to server. Please try again.");
     } finally {
       setIsLoading(false);
     }

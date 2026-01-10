@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import imageCompression from "browser-image-compression";
 import { appendToLocalStorageCsv } from "@/lib/localStorageCsv";
+import { EVENT_HEADERS } from "@/lib/pnmConstants";
 
 const INGEST_BACKUP_KEY = "ingestCsvBackup";
 const INGEST_BACKUP_HEADERS = [
@@ -13,6 +14,7 @@ const INGEST_BACKUP_HEADERS = [
   "pnmName",
   "wiscEmail",
   "studentId",
+  "eventType",
   "photoFileName",
   "photoFileSize",
 ];
@@ -24,6 +26,7 @@ export default function Ingest() {
   const [pnmName, setPnmName] = useState("");
   const [wiscEmail, setWiscEmail] = useState("");
   const [studentId, setStudentId] = useState("");
+  const [eventType, setEventType] = useState(EVENT_HEADERS[0]);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -56,6 +59,7 @@ export default function Ingest() {
       pnmName,
       wiscEmail,
       studentId,
+      eventType,
       photoFile.name,
       photoFile.size.toString(),
     ]);
@@ -97,7 +101,9 @@ export default function Ingest() {
           fullName: pnmName,
           email: wiscEmail,
           idNumber: studentId,
+          eventType: eventType,
           image: base64Image,
+          password: password,
         }),
       });
 
@@ -109,6 +115,7 @@ export default function Ingest() {
         setPnmName("");
         setWiscEmail("");
         setStudentId("");
+        setEventType(EVENT_HEADERS[0]);
         setPhotoFile(null);
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
@@ -180,6 +187,28 @@ export default function Ingest() {
             />
             <p className="text-sm text-gray-500">
               Wiscard IDs must be exactly 10 digits.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <label htmlFor="eventType" className="text-lg font-medium">
+              Event Attending:
+            </label>
+            <select
+              id="eventType"
+              value={eventType}
+              onChange={(e) => setEventType(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-700 focus:border-transparent bg-white"
+              required
+            >
+              {EVENT_HEADERS.map((event) => (
+                <option key={event} value={event}>
+                  {event}
+                </option>
+              ))}
+            </select>
+            <p className="text-sm text-gray-500">
+              This will mark the PNM as present for the selected event.
             </p>
           </div>
 
