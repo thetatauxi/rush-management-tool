@@ -157,6 +157,9 @@ export default function CheckIn() {
                 Back
               </Link>
             </div>
+            <p className="text-sm text-gray-500">
+              This will setup your device as a kiosk for scanning Wiscards and checking in PNMs for the selected event.
+            </p>
           </div>
         </main>
       </div>
