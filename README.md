@@ -1,36 +1,82 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Theta Tau Xi Rush Management Tool
+
+Internal tool for managing PNM (Potential New Member) attendance during rush events.
+
+## Features
+
+### Check-In Kiosk (`/check-in`)
+- Select a rush event, then scan Wiscards via barcode reader
+- Auto-submits on barcode scan (Enter key)
+- Visual success/error feedback optimized for kiosk use
+- Local CSV backup for resilience
+
+### Add PNMs (`/ingest`)
+- Register new PNMs with name, email, student ID, and headshot
+- Headshots are compressed client-side before upload
+- Data stored in Google Sheets via Apps Script backend
+
+### Generate Summary (`/summary`)
+- Search for PNMs by name (fuzzy search)
+- Generates a downloadable PNG image with:
+  - Headshot
+  - Name, ID, email
+  - Attendance for each rush event (checkmark/X)
+  - Total events attended
+- Designed for bulk slideshow insertion
+
+## Tech Stack
+
+- **Framework**: Next.js 16 (App Router)
+- **UI**: React 19, Tailwind CSS 4
+- **Image Generation**: @vercel/og (Satori)
+- **Search**: fuse.js (client-side fuzzy search)
+- **Backend**: Google Apps Script + Google Sheets
+- **Utilities**: browser-image-compression, sonner (toasts)
+
+## Project Structure
+
+```
+app/
+├── api/
+│   ├── proxy/route.ts        # Forwards requests to Google Apps Script
+│   └── generate-summary/     # @vercel/og image generation endpoint
+├── check-in/page.tsx         # Barcode scanning kiosk
+├── ingest/page.tsx           # Add new PNMs
+├── summary/page.tsx          # Generate attendance summary images
+├── login/page.tsx            # Password gate
+└── page.tsx                  # Home/navigation
+
+lib/
+├── pnmConstants.ts           # Shared event headers & types
+└── localStorageCsv.ts        # Local backup utilities
+```
+
+## Environment Variables
+
+Create a `.env.local` file:
+
+```env
+GOOGLE_SCRIPT_URL=https://script.google.com/macros/s/YOUR_SCRIPT_ID/exec
+```
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Configuration
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Rush events are defined in `lib/pnmConstants.ts`. Update `EVENT_HEADERS` to match your rush schedule—this must stay in sync with your Google Apps Script backend.
 
-## Learn More
+## Deployment
 
-To learn more about Next.js, take a look at the following resources:
+Deploy to Vercel or any platform supporting Next.js Edge Runtime (required for `/api/generate-summary`).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run build
+npm run start
+```
