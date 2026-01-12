@@ -1,9 +1,10 @@
 export const EVENT_HEADERS = [
-  "Event 1: Meet & Greet",
-  "Event 2: Speaker Series",
-  "Event 3: Facility Tour",
-  "Event 4: Social Mixer",
-  "Event 5: Professional Workshop",
+  "1/29 | Info & Community Service",
+  "1/30 | Info & PD",
+  "2/2 | Speed Networking",
+  "2/3 | Brotherhood Night",
+  "2/5 | Engineering Challenge",
+  "2/6 | Food Friday"
 ];
 
 export type PNMRecord = {
