@@ -22,6 +22,8 @@ export default function CheckIn() {
   const [isLoading, setIsLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [checkedInName, setCheckedInName] = useState<string>("");
+  const [showError, setShowError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   // Auto-focus on ID number input for barcode scanning when in scanning mode
   useEffect(() => {
@@ -49,6 +51,8 @@ export default function CheckIn() {
     }
 
     setIsLoading(true);
+    setShowError(false);
+    setErrorMessage("");
 
     const sanitizedIdNumber = trimmedIdNumber.slice(0, 10);
     appendToLocalStorageCsv(CHECKIN_BACKUP_KEY, CHECKIN_BACKUP_HEADERS, [
@@ -93,11 +97,30 @@ export default function CheckIn() {
         }, 2000);
       } else {
         // Show error, but keep in scanning mode
-        toast.error(data.error || "Failed to check in");
+        const message = data.error || "Failed to check in";
+        toast.error(message);
+        setErrorMessage(message);
+        setShowError(true);
+        setTimeout(() => {
+          setShowError(false);
+          setErrorMessage("");
+          setTimeout(() => {
+            idNumberInputRef.current?.focus();
+          }, 100);
+        }, 2500);
       }
     } catch (err) {
       console.error("Check-in error:", err);
       toast.error("Failed to connect to server. Please try again.");
+      setErrorMessage("Failed to connect to server. Please try again.");
+      setShowError(true);
+      setTimeout(() => {
+        setShowError(false);
+        setErrorMessage("");
+        setTimeout(() => {
+          idNumberInputRef.current?.focus();
+        }, 100);
+      }, 2500);
     } finally {
       setIsLoading(false);
     }
@@ -115,6 +138,8 @@ export default function CheckIn() {
     setIdNumber("");
     setShowSuccess(false);
     setCheckedInName("");
+    setShowError(false);
+    setErrorMessage("");
   };
 
   // Event Selection Screen
@@ -257,6 +282,35 @@ export default function CheckIn() {
             </p>
             <p className="text-xl text-green-100">
               {eventType}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Error Overlay */}
+      {showError && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-red-500/95 backdrop-blur-sm border-4 border-red-600">
+          <div className="flex flex-col items-center gap-6 px-6 text-center">
+            <div className="h-24 w-24 bg-red-600 rounded-full flex items-center justify-center">
+              <svg
+                className="h-16 w-16 text-white"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={3}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </div>
+            <p className="text-4xl font-bold text-white">
+              Check-in error
+            </p>
+            <p className="text-xl text-red-100">
+              {errorMessage}
             </p>
           </div>
         </div>
