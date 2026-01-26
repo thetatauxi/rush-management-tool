@@ -4,11 +4,13 @@ import { EVENT_HEADERS, PNMRecord } from "@/lib/pnmConstants";
 export const runtime = "edge";
 
 // Image dimensions - increased for better quality
-const WIDTH = 600;
-const HEADER_HEIGHT = 280;
+const WIDTH = 720;
+const PADDING = 28;
+const HEADSHOT_WIDTH = 240;
+const HEADSHOT_HEIGHT = 300;
+const HEADER_HEIGHT = HEADSHOT_HEIGHT + PADDING * 2;
 const EVENT_ROW_HEIGHT = 52;
 const FOOTER_HEIGHT = 70;
-const PADDING = 28;
 // SVG components for checkmark and X
 function CheckIcon() {
   return (
@@ -110,8 +112,8 @@ export async function POST(request: Request) {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                width: 180,
-                height: 220,
+                width: HEADSHOT_WIDTH,
+                height: HEADSHOT_HEIGHT,
                 borderRadius: 12,
                 backgroundColor: "#f5f5f5",
                 border: "3px solid #d4d4d4",
@@ -134,8 +136,8 @@ export async function POST(request: Request) {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                width: 180,
-                height: 220,
+                width: HEADSHOT_WIDTH,
+                height: HEADSHOT_HEIGHT,
                 borderRadius: 12,
                 backgroundColor: "#e5e5e5",
                 border: "3px solid #d4d4d4",
@@ -143,8 +145,8 @@ export async function POST(request: Request) {
             >
               {/* User icon placeholder */}
               <svg
-                width="80"
-                height="80"
+                width="96"
+                height="96"
                 viewBox="0 0 24 24"
                 fill="none"
                 stroke="#a3a3a3"
