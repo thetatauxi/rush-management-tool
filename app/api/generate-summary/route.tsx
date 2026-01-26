@@ -6,17 +6,19 @@ export const runtime = "edge";
 // Image dimensions - increased for better quality
 const WIDTH = 720;
 const PADDING = 28;
-const HEADSHOT_WIDTH = 240;
-const HEADSHOT_HEIGHT = 300;
-const HEADER_HEIGHT = HEADSHOT_HEIGHT + PADDING * 2;
-const EVENT_ROW_HEIGHT = 52;
-const FOOTER_HEIGHT = 70;
+const HEADSHOT_WIDTH = 360;
+const HEADSHOT_HEIGHT = 420;
+const INFO_SECTION_HEIGHT = 120;
+const HEADER_HEIGHT =
+  HEADSHOT_HEIGHT + INFO_SECTION_HEIGHT + PADDING * 2;
+const EVENT_ROW_HEIGHT = 44;
+const FOOTER_HEIGHT = 64;
 // SVG components for checkmark and X
 function CheckIcon() {
   return (
     <svg
-      width="28"
-      height="28"
+      width="22"
+      height="22"
       viewBox="0 0 24 24"
       fill="none"
       style={{ flexShrink: 0 }}
@@ -36,8 +38,8 @@ function CheckIcon() {
 function XIcon() {
   return (
     <svg
-      width="28"
-      height="28"
+      width="22"
+      height="22"
       viewBox="0 0 24 24"
       fill="none"
       style={{ flexShrink: 0 }}
@@ -99,10 +101,11 @@ export async function POST(request: Request) {
         <div
           style={{
             display: "flex",
-            flexDirection: "row",
+            flexDirection: "column",
             padding: PADDING,
-            gap: 24,
+            gap: 16,
             borderBottom: "3px solid #e5e5e5",
+            alignItems: "center",
           }}
         >
           {/* Headshot - using contain to show full image */}
@@ -114,21 +117,21 @@ export async function POST(request: Request) {
                 justifyContent: "center",
                 width: HEADSHOT_WIDTH,
                 height: HEADSHOT_HEIGHT,
-                borderRadius: 12,
+                borderRadius: 16,
                 backgroundColor: "#f5f5f5",
                 border: "3px solid #d4d4d4",
                 overflow: "hidden",
               }}
             >
-                <img
-                  src={headshotUrl}
-                  alt={`${name} headshot`}
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "contain",
-                  }}
-                />
+              <img
+                src={headshotUrl}
+                alt={`${name} headshot`}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                }}
+              />
             </div>
           ) : (
             <div
@@ -138,7 +141,7 @@ export async function POST(request: Request) {
                 justifyContent: "center",
                 width: HEADSHOT_WIDTH,
                 height: HEADSHOT_HEIGHT,
-                borderRadius: 12,
+                borderRadius: 16,
                 backgroundColor: "#e5e5e5",
                 border: "3px solid #d4d4d4",
               }}
@@ -166,9 +169,10 @@ export async function POST(request: Request) {
               display: "flex",
               flexDirection: "column",
               justifyContent: "center",
-              gap: 10,
-              flex: 1,
+              alignItems: "center",
+              gap: 8,
               minWidth: 0,
+              textAlign: "center",
             }}
           >
             <span
@@ -183,7 +187,7 @@ export async function POST(request: Request) {
             </span>
             <span
               style={{
-                fontSize: 20,
+                fontSize: 18,
                 color: "#525252",
               }}
             >
@@ -194,7 +198,7 @@ export async function POST(request: Request) {
             </span>
             <span
               style={{
-                fontSize: 18,
+                fontSize: 16,
                 color: "#737373",
               }}
             >
@@ -210,7 +214,7 @@ export async function POST(request: Request) {
             flexDirection: "column",
             padding: `${PADDING / 2}px ${PADDING}px`,
             flex: 1,
-            gap: 4,
+            gap: 6,
           }}
         >
           {events.map((event, index) => (
@@ -222,15 +226,15 @@ export async function POST(request: Request) {
                 alignItems: "center",
                 justifyContent: "space-between",
                 height: EVENT_ROW_HEIGHT,
-                paddingLeft: 12,
-                paddingRight: 12,
+                paddingLeft: 10,
+                paddingRight: 10,
                 backgroundColor: index % 2 === 0 ? "#ffffff" : "#f5f5f5",
                 borderRadius: 8,
               }}
             >
               <span
                 style={{
-                  fontSize: 18,
+                  fontSize: 16,
                   color: "#404040",
                   flex: 1,
                 }}
