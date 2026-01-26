@@ -8,11 +8,16 @@ const WIDTH = 720;
 const PADDING = 28;
 const HEADSHOT_WIDTH = 360;
 const HEADSHOT_HEIGHT = 420;
-const INFO_SECTION_HEIGHT = 120;
+const INFO_SECTION_HEIGHT = 110;
+const HEADER_GAP = 16;
 const HEADER_HEIGHT =
-  HEADSHOT_HEIGHT + INFO_SECTION_HEIGHT + PADDING * 2;
+  HEADSHOT_HEIGHT + INFO_SECTION_HEIGHT + HEADER_GAP + PADDING * 2;
 const EVENT_ROW_HEIGHT = 44;
-const FOOTER_HEIGHT = 64;
+const EVENT_GAP = 6;
+const EVENTS_PADDING_Y = PADDING;
+const FOOTER_TEXT_HEIGHT = 26;
+const FOOTER_PADDING_Y = PADDING;
+const FOOTER_HEIGHT = FOOTER_PADDING_Y * 2 + FOOTER_TEXT_HEIGHT;
 // SVG components for checkmark and X
 function CheckIcon() {
   return (
@@ -68,11 +73,12 @@ export async function POST(request: Request) {
     }
 
     // Calculate dynamic height based on number of events
-    const height =
-      HEADER_HEIGHT +
-      EVENT_HEADERS.length * EVENT_ROW_HEIGHT +
-      FOOTER_HEIGHT +
-      PADDING * 2;
+    const eventCount = EVENT_HEADERS.length;
+    const eventsHeight =
+      eventCount * EVENT_ROW_HEIGHT +
+      Math.max(eventCount - 1, 0) * EVENT_GAP +
+      EVENTS_PADDING_Y;
+    const height = HEADER_HEIGHT + eventsHeight + FOOTER_HEIGHT;
 
     // Get event attendance data
     const events = EVENT_HEADERS.map((eventName) => ({
