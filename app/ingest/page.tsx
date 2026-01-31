@@ -19,6 +19,15 @@ const INGEST_BACKUP_HEADERS = [
   "photoFileSize",
 ];
 
+// Helper function to convert text to title case
+const toTitleCase = (str: string): string => {
+  return str
+    .toLowerCase()
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+};
+
 export default function Ingest() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -111,11 +120,10 @@ export default function Ingest() {
 
       if (response.ok && data.ok) {
         toast.success("PNM added successfully!");
-        // Reset form
+        // Reset form (but keep eventType)
         setPnmName("");
         setWiscEmail("");
         setStudentId("");
-        setEventType(EVENT_HEADERS[0]);
         setPhotoFile(null);
         if (fileInputRef.current) {
           fileInputRef.current.value = "";
@@ -146,7 +154,7 @@ export default function Ingest() {
               type="text"
               id="pnmName"
               value={pnmName}
-              onChange={(e) => setPnmName(e.target.value)}
+              onChange={(e) => setPnmName(toTitleCase(e.target.value))}
               className="px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-700 focus:border-transparent"
               placeholder="Enter PNM name"
               required

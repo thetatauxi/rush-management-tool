@@ -101,6 +101,7 @@ export default function CheckIn() {
         toast.error(message);
         setErrorMessage(message);
         setShowError(true);
+        setIdNumber("");
         setTimeout(() => {
           setShowError(false);
           setErrorMessage("");
@@ -114,6 +115,7 @@ export default function CheckIn() {
       toast.error("Failed to connect to server. Please try again.");
       setErrorMessage("Failed to connect to server. Please try again.");
       setShowError(true);
+      setIdNumber("");
       setTimeout(() => {
         setShowError(false);
         setErrorMessage("");
@@ -131,15 +133,6 @@ export default function CheckIn() {
     if (kioskMode === "scanning") {
       handleCheckIn();
     }
-  };
-
-  const handleReset = () => {
-    setKioskMode("event-selection");
-    setIdNumber("");
-    setShowSuccess(false);
-    setCheckedInName("");
-    setShowError(false);
-    setErrorMessage("");
   };
 
   // Event Selection Screen
