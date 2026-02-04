@@ -72,8 +72,10 @@ export async function POST(request: Request) {
       });
     }
 
+    // TEMPORARY: exclude last 2 events from picture summary
+    const eventsForSummary = EVENT_HEADERS.slice(0, -2);
     // Calculate dynamic height based on number of events
-    const eventCount = EVENT_HEADERS.length;
+    const eventCount = eventsForSummary.length;
     const eventsHeight =
       eventCount * EVENT_ROW_HEIGHT +
       Math.max(eventCount - 1, 0) * EVENT_GAP +
@@ -81,7 +83,7 @@ export async function POST(request: Request) {
     const height = HEADER_HEIGHT + eventsHeight + FOOTER_HEIGHT;
 
     // Get event attendance data
-    const events = EVENT_HEADERS.map((eventName) => ({
+    const events = eventsForSummary.map((eventName) => ({
       name: eventName,
       attended: Boolean(record[eventName]),
     }));
