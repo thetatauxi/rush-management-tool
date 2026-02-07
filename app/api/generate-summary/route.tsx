@@ -6,9 +6,9 @@ export const runtime = "edge";
 // Image dimensions - increased for better quality
 const WIDTH = 720;
 const PADDING = 28;
-const HEADSHOT_WIDTH = 360;
-const HEADSHOT_HEIGHT = 420;
-const INFO_SECTION_HEIGHT = 110;
+const HEADSHOT_WIDTH = 400;
+const HEADSHOT_HEIGHT = 500;
+const INFO_SECTION_HEIGHT = 50;
 const HEADER_GAP = 16;
 const HEADER_HEIGHT =
   HEADSHOT_HEIGHT + INFO_SECTION_HEIGHT + HEADER_GAP + PADDING * 2;
@@ -73,7 +73,7 @@ export async function POST(request: Request) {
     }
 
     // TEMPORARY: exclude last 2 events from picture summary
-    const eventsForSummary = EVENT_HEADERS.slice(0, -2);
+    const eventsForSummary = EVENT_HEADERS//.slice(0, -2);
     // Calculate dynamic height based on number of events
     const eventCount = eventsForSummary.length;
     const eventsHeight =
@@ -90,8 +90,6 @@ export async function POST(request: Request) {
 
     const totalAttended = record["Total Events Attended"] ?? 0;
     const name = record.Name?.text ?? "Unknown";
-    const idNumber = record["Wiscard Number"] ?? null;
-    const email = record.Email ?? "";
     const headshotUrl = record.Name?.imageDataUrl ?? null;
 
     return new ImageResponse(
@@ -171,14 +169,13 @@ export async function POST(request: Request) {
             </div>
           )}
 
-          {/* Info */}
+          {/* Info - name only */}
           <div
             style={{
               display: "flex",
               flexDirection: "column",
               justifyContent: "center",
               alignItems: "center",
-              gap: 8,
               minWidth: 0,
               textAlign: "center",
             }}
@@ -192,25 +189,6 @@ export async function POST(request: Request) {
               }}
             >
               {name.length > 20 ? name.slice(0, 20) + "..." : name}
-            </span>
-            <span
-              style={{
-                fontSize: 18,
-                color: "#525252",
-              }}
-            >
-              ID:{" "}
-              {idNumber !== undefined && idNumber !== null
-                ? String(idNumber)
-                : "N/A"}
-            </span>
-            <span
-              style={{
-                fontSize: 16,
-                color: "#737373",
-              }}
-            >
-              {email.length > 30 ? email.slice(0, 30) + "..." : email}
             </span>
           </div>
         </div>
