@@ -246,74 +246,69 @@ export default function VoteDashboard() {
   }, [userId, votingRound]);
 
   // Fetch and subscribe to round counts for the active round (officers only)
-  useEffect(() => {
+  const fetchRoundCounts = useCallback(async () => {
     if (!hasViewFeedbackPrivilege || !votingRound) {
       setRoundCounts({});
       return;
     }
 
-    async function fetchRoundCounts() {
-      try {
-        const { data, error } = await supabase
-          .from(`voting-r${votingRound}`)
-          .select("id, positive, negative, abstain");
+    try {
+      const { data, error } = await supabase
+        .from(`voting-r${votingRound}`)
+        .select("id, positive, negative, abstain");
 
-        if (error) throw error;
+      if (error) throw error;
 
-        const countsMap: Record<string, { positive: number; abstain: number; negative: number }> = {};
-        if (data) {
-          data.forEach((row) => {
-            countsMap[row.id] = {
-              positive: row.positive || 0,
-              abstain: row.abstain || 0,
-              negative: row.negative || 0,
-            };
-          });
-        }
-        setRoundCounts(countsMap);
-      } catch (err) {
-        console.error("Error fetching round counts:", err);
+      const countsMap: Record<string, { positive: number; abstain: number; negative: number }> = {};
+      if (data) {
+        data.forEach((row) => {
+          countsMap[row.id] = {
+            positive: row.positive || 0,
+            abstain: row.abstain || 0,
+            negative: row.negative || 0,
+          };
+        });
       }
+      setRoundCounts(countsMap);
+    } catch (err) {
+      console.error("Error fetching round counts:", err);
     }
+  }, [hasViewFeedbackPrivilege, votingRound]);
+
+  useEffect(() => {
+    if (!hasViewFeedbackPrivilege || !votingRound) return;
 
     fetchRoundCounts();
 
+    const channelName = `voting-r${votingRound}-realtime-${Date.now()}`;
     const channel = supabase
-      .channel(`voting-r${votingRound}-realtime`)
+      .channel(channelName)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: `voting-r${votingRound}` },
-        (payload) => {
-          if (payload.eventType === "DELETE") {
-            const oldRow = payload.old as { id: string };
-            if (oldRow) {
-              setRoundCounts((prev) => {
-                const next = { ...prev };
-                delete next[oldRow.id];
-                return next;
-              });
-            }
-          } else {
-            const newRow = payload.new as { id: string; positive: number; negative: number; abstain: number };
-            if (newRow) {
-              setRoundCounts((prev) => ({
-                ...prev,
-                [newRow.id]: {
-                  positive: newRow.positive || 0,
-                  abstain: newRow.abstain || 0,
-                  negative: newRow.negative || 0,
-                },
-              }));
-            }
-          }
+        () => {
+          fetchRoundCounts();
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "member_votes" },
+        () => {
+          fetchRoundCounts();
         }
       )
       .subscribe();
 
+    // 1.5s live polling interval ensures counts ALWAYS reflect in real-time
+    const pollInterval = setInterval(() => {
+      fetchRoundCounts();
+    }, 1500);
+
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(pollInterval);
     };
-  }, [hasViewFeedbackPrivilege, votingRound]);
+  }, [hasViewFeedbackPrivilege, votingRound, fetchRoundCounts]);
 
   // Filtered and Sorted PNMs list
   const filteredPnms = useMemo(() => {
@@ -499,6 +494,11 @@ export default function VoteDashboard() {
 
   // Presentation Mode: Change Active PNM
   const handleSelectPresentationPnm = async (studentId: string) => {
+    if (isLive || (countdownSeconds !== null && countdownSeconds > 0)) {
+      toast.warning("Voting is currently open or closing. Close voting before changing candidates.");
+      return;
+    }
+
     try {
       setActivePnmId(studentId);
       const { error } = await supabase
@@ -514,6 +514,7 @@ export default function VoteDashboard() {
   };
 
   const handleNextPnm = async () => {
+    if (isLive || (countdownSeconds !== null && countdownSeconds > 0)) return;
     if (activeIndex < filteredPnms.length - 1) {
       const nextCandidate = filteredPnms[activeIndex + 1];
       await handleSelectPresentationPnm(nextCandidate.student_id);
@@ -521,6 +522,7 @@ export default function VoteDashboard() {
   };
 
   const handlePrevPnm = async () => {
+    if (isLive || (countdownSeconds !== null && countdownSeconds > 0)) return;
     if (activeIndex > 0) {
       const prevCandidate = filteredPnms[activeIndex - 1];
       await handleSelectPresentationPnm(prevCandidate.student_id);
@@ -578,6 +580,9 @@ export default function VoteDashboard() {
       const updatedVotes = { ...votes, [studentId]: targetVote };
       setVotes(updatedVotes);
 
+      // Re-fetch counts immediately
+      fetchRoundCounts();
+
       // In presentation mode, hide vote and leave change mode
       if (isPresentationRound) {
         setIsChangingVote(false);
@@ -587,7 +592,7 @@ export default function VoteDashboard() {
       if (targetVote === null) {
         toast.info("Vote cleared");
       } else {
-        toast.success(`Vote recorded: ${targetVote.toUpperCase()}`);
+        toast.success("Vote submitted");
       }
     } catch (err) {
       console.error("Error casting vote:", err);
@@ -734,6 +739,14 @@ export default function VoteDashboard() {
   const activeTotalVotes = activePosVotes + activeAbstVotes + activeNegVotes;
   const activeUserVote = activePnm ? votes[activePnm.student_id] || null : null;
 
+  // Total PNMs voted on in the active round
+  const pnmsVotedOnCount = useMemo(() => {
+    return pnms.filter((p) => {
+      const c = roundCounts[p.student_id];
+      return c && (c.positive + c.abstain + c.negative > 0);
+    }).length;
+  }, [pnms, roundCounts]);
+
   if (checkingAuth) {
     return (
       <div className="flex min-h-screen items-center justify-center font-sans">
@@ -819,28 +832,34 @@ export default function VoteDashboard() {
                   App Com: {appComLive ? "LIVE" : "OFF"}
                 </button>
               </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={handleGoLive}
-                  disabled={isLive && votingRound === selectedRegentRound}
-                  className={`flex-1 py-1.5 px-3 rounded text-xs font-bold text-white transition-all ${isLive && votingRound === selectedRegentRound
-                    ? "bg-green-400 cursor-not-allowed opacity-50"
-                    : "bg-green-700 hover:bg-green-800 shadow-sm"
-                    }`}
-                >
-                  Go Live
-                </button>
-                <button
-                  onClick={handleCloseVoting}
-                  disabled={!isLive}
-                  className={`flex-1 py-1.5 px-3 rounded text-xs font-bold text-white transition-all ${!isLive
-                    ? "bg-zinc-300 cursor-not-allowed text-zinc-500"
-                    : "bg-zinc-700 hover:bg-zinc-800 shadow-sm"
-                    }`}
-                >
-                  Close Voting
-                </button>
-              </div>
+              {!isPresentationRound ? (
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleGoLive}
+                    disabled={isLive && votingRound === selectedRegentRound}
+                    className={`flex-1 py-1.5 px-3 rounded text-xs font-bold text-white transition-all ${isLive && votingRound === selectedRegentRound
+                      ? "bg-green-400 cursor-not-allowed opacity-50"
+                      : "bg-green-700 hover:bg-green-800 shadow-sm"
+                      }`}
+                  >
+                    Go Live
+                  </button>
+                  <button
+                    onClick={handleCloseVoting}
+                    disabled={!isLive}
+                    className={`flex-1 py-1.5 px-3 rounded text-xs font-bold text-white transition-all ${!isLive
+                      ? "bg-zinc-300 cursor-not-allowed text-zinc-500"
+                      : "bg-zinc-700 hover:bg-zinc-800 shadow-sm"
+                      }`}
+                  >
+                    Close Voting
+                  </button>
+                </div>
+              ) : (
+                <div className="text-[11px] text-zinc-500 bg-zinc-50 border border-zinc-200 rounded px-2.5 py-1 text-center font-medium">
+                  Presentation mode active — candidate voting is controlled in the bar below.
+                </div>
+              )}
             </div>
           </div>
         ) : (
@@ -889,24 +908,26 @@ export default function VoteDashboard() {
           Hi, <span className="font-bold text-red-700">{userFirstName}</span>! Your role is <span className="font-bold underline decoration-zinc-400 capitalize">{userRole}</span>.
         </div>
 
-        {/* Right Side: Search bar (1/3 width) */}
-        <div className="w-full md:w-1/3 relative">
-          <input
-            type="text"
-            placeholder="Search PNM by name, email, or Student ID..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full px-4 py-2 bg-white border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-700 text-zinc-800 placeholder-zinc-400 shadow-sm text-sm"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 text-xs font-semibold"
-            >
-              Clear
-            </button>
-          )}
-        </div>
+        {/* Right Side: Search bar (Hidden during presentation mode) */}
+        {!isPresentationRound && (
+          <div className="w-full md:w-1/3 relative">
+            <input
+              type="text"
+              placeholder="Search PNM by name, email, or Student ID..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full px-4 py-2 bg-white border border-zinc-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-700 text-zinc-800 placeholder-zinc-400 shadow-sm text-sm"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 text-xs font-semibold"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
       </section>
 
       {/* ========================================================================= */}
@@ -918,9 +939,9 @@ export default function VoteDashboard() {
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={handlePrevPnm}
-              disabled={activeIndex <= 0}
+              disabled={isLive || (countdownSeconds !== null && countdownSeconds > 0) || activeIndex <= 0}
               className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-bold transition-colors flex items-center gap-1 border border-zinc-700"
-              title="Previous candidate"
+              title={isLive || (countdownSeconds !== null && countdownSeconds > 0) ? "Close voting before navigating" : "Previous candidate"}
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
@@ -933,7 +954,12 @@ export default function VoteDashboard() {
               <select
                 value={activePnm?.student_id || ""}
                 onChange={(e) => handleSelectPresentationPnm(e.target.value)}
-                className="bg-zinc-800 text-white text-xs font-semibold border border-zinc-700 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-red-600 cursor-pointer max-w-[220px] md:max-w-xs truncate"
+                disabled={isLive || (countdownSeconds !== null && countdownSeconds > 0)}
+                title={isLive || (countdownSeconds !== null && countdownSeconds > 0) ? "Close voting before selecting another candidate" : "Select candidate"}
+                className={`bg-zinc-800 text-white text-xs font-semibold border border-zinc-700 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-red-600 max-w-[220px] md:max-w-xs truncate ${isLive || (countdownSeconds !== null && countdownSeconds > 0)
+                  ? "opacity-50 cursor-not-allowed"
+                  : "cursor-pointer"
+                  }`}
               >
                 {filteredPnms.map((p, idx) => {
                   const pCounts = roundCounts[p.student_id];
@@ -949,9 +975,9 @@ export default function VoteDashboard() {
 
             <button
               onClick={handleNextPnm}
-              disabled={activeIndex >= filteredPnms.length - 1}
+              disabled={isLive || (countdownSeconds !== null && countdownSeconds > 0) || activeIndex >= filteredPnms.length - 1}
               className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-bold transition-colors flex items-center gap-1 border border-zinc-700"
-              title="Next candidate"
+              title={isLive || (countdownSeconds !== null && countdownSeconds > 0) ? "Close voting before navigating" : "Next candidate"}
             >
               Next
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
@@ -961,18 +987,30 @@ export default function VoteDashboard() {
           </div>
 
           {/* Separate Counters & Total Votes Made Counter */}
-          <div className="flex items-center gap-4 flex-wrap bg-zinc-950/70 px-4 py-1.5 rounded-lg border border-zinc-800">
-            <div className="flex items-center gap-3 text-xs font-mono font-bold">
-              <span className="text-green-400">Y: {activePosVotes}</span>
-              <span className="text-zinc-400">A: {activeAbstVotes}</span>
-              <span className="text-red-400">N: {activeNegVotes}</span>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-4 flex-wrap bg-zinc-950/70 px-4 py-1.5 rounded-lg border border-zinc-800">
+              <div className="flex items-center gap-3 text-xs font-mono font-bold">
+                <span className="text-green-400">Y: {activePosVotes}</span>
+                <span className="text-zinc-400">A: {activeAbstVotes}</span>
+                <span className="text-red-400">N: {activeNegVotes}</span>
+              </div>
+              <div className="h-4 w-px bg-zinc-700" />
+              <div className="text-xs font-mono font-bold text-amber-400 flex items-center gap-1.5">
+                <span>Total Votes:</span>
+                <span className="bg-amber-400/20 text-amber-300 px-2 py-0.5 rounded border border-amber-400/40 text-sm">
+                  {activeTotalVotes}
+                </span>
+              </div>
             </div>
-            <div className="h-4 w-px bg-zinc-700" />
-            <div className="text-xs font-mono font-bold text-amber-400 flex items-center gap-1.5">
-              <span>Total Votes:</span>
-              <span className="bg-amber-400/20 text-amber-300 px-2 py-0.5 rounded border border-amber-400/40 text-sm">
-                {activeTotalVotes}
-              </span>
+
+            {/* PNMs Voted On Box (Red Style) */}
+            <div className="flex items-center bg-zinc-950/70 px-4 py-1.5 rounded-lg border border-red-900/60">
+              <div className="text-xs font-mono font-bold text-red-400 flex items-center gap-1.5">
+                <span>PNMs voted on:</span>
+                <span className="bg-red-950/80 text-red-300 px-2 py-0.5 rounded border border-red-800/60 text-sm">
+                  {pnmsVotedOnCount} <span className="text-red-400/70 text-xs">/ {stats.total}</span>
+                </span>
+              </div>
             </div>
           </div>
 
@@ -1098,23 +1136,38 @@ export default function VoteDashboard() {
                     )}
                   </div>
 
-                  {/* 6 Attendance Dots underneath headshot */}
-                  <div className="flex justify-center gap-2 py-2 border-y border-zinc-200">
-                    {[
-                      activePnm.event_1,
-                      activePnm.event_2,
-                      activePnm.event_3,
-                      activePnm.event_4,
-                      activePnm.event_5,
-                      activePnm.event_6,
-                    ].map((attended, i) => (
-                      <span
-                        key={i}
-                        className={`w-4 h-4 rounded-full border shadow-sm ${attended ? "bg-green-500 border-green-600" : "bg-red-500 border-red-600"
-                          }`}
-                        title={EVENT_HEADERS[i]}
-                      />
-                    ))}
+                  {/* Stacked Event Attendance List */}
+                  <div className="flex flex-col gap-1.5 p-3 bg-zinc-50 rounded-lg border border-zinc-200">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                      Event Attendance
+                    </span>
+                    <div className="flex flex-col gap-1.5 mt-0.5">
+                      {[
+                        { name: EVENT_HEADERS[0] || "Event 1", attended: activePnm.event_1 },
+                        { name: EVENT_HEADERS[1] || "Event 2", attended: activePnm.event_2 },
+                        { name: EVENT_HEADERS[2] || "Event 3", attended: activePnm.event_3 },
+                        { name: EVENT_HEADERS[3] || "Event 4", attended: activePnm.event_4 },
+                        { name: EVENT_HEADERS[4] || "Event 5", attended: activePnm.event_5 },
+                        { name: EVENT_HEADERS[5] || "Event 6", attended: activePnm.event_6 },
+                      ].map((ev, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between py-1 px-2 rounded bg-white border border-zinc-200/80 text-xs shadow-2xs"
+                        >
+                          <span className="font-medium text-zinc-700 truncate pr-2" title={ev.name}>
+                            {ev.name}
+                          </span>
+                          <span
+                            className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 shadow-xs ${
+                              ev.attended
+                                ? "bg-green-500 border-green-600"
+                                : "bg-red-500 border-red-600"
+                            }`}
+                            title={ev.attended ? "Attended" : "Absent"}
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   {/* Major, Year, Absence */}
@@ -1710,23 +1763,38 @@ export default function VoteDashboard() {
                     )}
                   </div>
 
-                  {/* 6 Attendance Dots underneath headshot */}
-                  <div className="flex justify-center gap-2 py-2 border-y border-zinc-200">
-                    {[
-                      selectedPnmForDetails.event_1,
-                      selectedPnmForDetails.event_2,
-                      selectedPnmForDetails.event_3,
-                      selectedPnmForDetails.event_4,
-                      selectedPnmForDetails.event_5,
-                      selectedPnmForDetails.event_6,
-                    ].map((attended, i) => (
-                      <span
-                        key={i}
-                        className={`w-4 h-4 rounded-full border shadow-sm ${attended ? "bg-green-500 border-green-600" : "bg-red-500 border-red-600"
-                          }`}
-                        title={EVENT_HEADERS[i]}
-                      />
-                    ))}
+                  {/* Stacked Event Attendance List */}
+                  <div className="flex flex-col gap-1.5 p-3 bg-zinc-50 rounded-lg border border-zinc-200">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                      Event Attendance
+                    </span>
+                    <div className="flex flex-col gap-1.5 mt-0.5">
+                      {[
+                        { name: EVENT_HEADERS[0] || "Event 1", attended: selectedPnmForDetails.event_1 },
+                        { name: EVENT_HEADERS[1] || "Event 2", attended: selectedPnmForDetails.event_2 },
+                        { name: EVENT_HEADERS[2] || "Event 3", attended: selectedPnmForDetails.event_3 },
+                        { name: EVENT_HEADERS[3] || "Event 4", attended: selectedPnmForDetails.event_4 },
+                        { name: EVENT_HEADERS[4] || "Event 5", attended: selectedPnmForDetails.event_5 },
+                        { name: EVENT_HEADERS[5] || "Event 6", attended: selectedPnmForDetails.event_6 },
+                      ].map((ev, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between py-1 px-2 rounded bg-white border border-zinc-200/80 text-xs shadow-2xs"
+                        >
+                          <span className="font-medium text-zinc-700 truncate pr-2" title={ev.name}>
+                            {ev.name}
+                          </span>
+                          <span
+                            className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 shadow-xs ${
+                              ev.attended
+                                ? "bg-green-500 border-green-600"
+                                : "bg-red-500 border-red-600"
+                            }`}
+                            title={ev.attended ? "Attended" : "Absent"}
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   {/* Major, Year, Absence */}

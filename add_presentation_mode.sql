@@ -42,3 +42,14 @@ BEGIN
   WHERE id = 1;
 END;
 $$;
+
+-- 3. Ensure Realtime Publication includes all voting tables and member_votes
+DO $$
+BEGIN
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE "voting-ops", "voting-r1", "voting-r2", "voting-r3", "voting-r4", "member_votes";
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+    WHEN others THEN NULL;
+  END;
+END $$;
