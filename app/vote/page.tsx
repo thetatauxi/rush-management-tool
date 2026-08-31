@@ -707,6 +707,12 @@ export default function VoteDashboard() {
           application_comments: editedValues.application_comments,
           interviewer_names: editedValues.interviewer_names,
           interview_notes: editedValues.interview_notes,
+          event_1: editedValues.event_1,
+          event_2: editedValues.event_2,
+          event_3: editedValues.event_3,
+          event_4: editedValues.event_4,
+          event_5: editedValues.event_5,
+          event_6: editedValues.event_6,
         };
 
       const { error } = await supabase
@@ -1138,35 +1144,79 @@ export default function VoteDashboard() {
 
                   {/* Stacked Event Attendance List */}
                   <div className="flex flex-col gap-1.5 p-3 bg-zinc-50 rounded-lg border border-zinc-200">
-                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
-                      Event Attendance
-                    </span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                        Event Attendance
+                      </span>
+                      {isEditing && !isRushCommitteeOnly && (
+                        <span className="text-[9px] text-zinc-400 font-semibold italic">
+                          Click to toggle
+                        </span>
+                      )}
+                    </div>
                     <div className="flex flex-col gap-1.5 mt-0.5">
-                      {[
-                        { name: EVENT_HEADERS[0] || "Event 1", attended: activePnm.event_1 },
-                        { name: EVENT_HEADERS[1] || "Event 2", attended: activePnm.event_2 },
-                        { name: EVENT_HEADERS[2] || "Event 3", attended: activePnm.event_3 },
-                        { name: EVENT_HEADERS[3] || "Event 4", attended: activePnm.event_4 },
-                        { name: EVENT_HEADERS[4] || "Event 5", attended: activePnm.event_5 },
-                        { name: EVENT_HEADERS[5] || "Event 6", attended: activePnm.event_6 },
-                      ].map((ev, i) => (
-                        <div
-                          key={i}
-                          className="flex items-center justify-between py-1 px-2 rounded bg-white border border-zinc-200/80 text-xs shadow-2xs"
-                        >
-                          <span className="font-medium text-zinc-700 truncate pr-2" title={ev.name}>
-                            {ev.name}
-                          </span>
-                          <span
-                            className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 shadow-xs ${
-                              ev.attended
-                                ? "bg-green-500 border-green-600"
-                                : "bg-red-500 border-red-600"
+                      {(["event_1", "event_2", "event_3", "event_4", "event_5", "event_6"] as const).map((key, i) => {
+                        const isEditingEvents = isEditing && !isRushCommitteeOnly;
+                        const isAttended = isEditingEvents ? !!editedValues[key] : !!activePnm[key];
+                        const eventName = EVENT_HEADERS[i] || `Event ${i + 1}`;
+
+                        return (
+                          <div
+                            key={key}
+                            className={`flex items-center justify-between py-1 px-2 rounded border text-xs shadow-2xs transition-colors ${
+                              isEditingEvents
+                                ? "bg-white border-zinc-300 hover:border-zinc-400 cursor-pointer select-none"
+                                : "bg-white border-zinc-200/80"
                             }`}
-                            title={ev.attended ? "Attended" : "Absent"}
-                          />
-                        </div>
-                      ))}
+                            onClick={() => {
+                              if (isEditingEvents) {
+                                setEditedValues((prev) => ({
+                                  ...prev,
+                                  [key]: !isAttended,
+                                }));
+                              }
+                            }}
+                          >
+                            <span className="font-medium text-zinc-700 truncate pr-2" title={eventName}>
+                              {eventName}
+                            </span>
+                            {isEditingEvents ? (
+                              <button
+                                type="button"
+                                className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 shadow-xs transition-all transform hover:scale-110 ${
+                                  isAttended
+                                    ? "bg-green-500 border-green-600 text-white"
+                                    : "bg-red-500 border-red-600 text-white"
+                                }`}
+                                title={`Click to mark as ${isAttended ? "Absent" : "Attended"}`}
+                              >
+                                <svg
+                                  className="w-2.5 h-2.5"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                  strokeWidth="2.5"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                                  />
+                                </svg>
+                              </button>
+                            ) : (
+                              <span
+                                className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 shadow-xs ${
+                                  isAttended
+                                    ? "bg-green-500 border-green-600"
+                                    : "bg-red-500 border-red-600"
+                                }`}
+                                title={isAttended ? "Attended" : "Absent"}
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -1765,35 +1815,79 @@ export default function VoteDashboard() {
 
                   {/* Stacked Event Attendance List */}
                   <div className="flex flex-col gap-1.5 p-3 bg-zinc-50 rounded-lg border border-zinc-200">
-                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
-                      Event Attendance
-                    </span>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                        Event Attendance
+                      </span>
+                      {isEditing && !isRushCommitteeOnly && (
+                        <span className="text-[9px] text-zinc-400 font-semibold italic">
+                          Click to toggle
+                        </span>
+                      )}
+                    </div>
                     <div className="flex flex-col gap-1.5 mt-0.5">
-                      {[
-                        { name: EVENT_HEADERS[0] || "Event 1", attended: selectedPnmForDetails.event_1 },
-                        { name: EVENT_HEADERS[1] || "Event 2", attended: selectedPnmForDetails.event_2 },
-                        { name: EVENT_HEADERS[2] || "Event 3", attended: selectedPnmForDetails.event_3 },
-                        { name: EVENT_HEADERS[3] || "Event 4", attended: selectedPnmForDetails.event_4 },
-                        { name: EVENT_HEADERS[4] || "Event 5", attended: selectedPnmForDetails.event_5 },
-                        { name: EVENT_HEADERS[5] || "Event 6", attended: selectedPnmForDetails.event_6 },
-                      ].map((ev, i) => (
-                        <div
-                          key={i}
-                          className="flex items-center justify-between py-1 px-2 rounded bg-white border border-zinc-200/80 text-xs shadow-2xs"
-                        >
-                          <span className="font-medium text-zinc-700 truncate pr-2" title={ev.name}>
-                            {ev.name}
-                          </span>
-                          <span
-                            className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 shadow-xs ${
-                              ev.attended
-                                ? "bg-green-500 border-green-600"
-                                : "bg-red-500 border-red-600"
+                      {(["event_1", "event_2", "event_3", "event_4", "event_5", "event_6"] as const).map((key, i) => {
+                        const isEditingEvents = isEditing && !isRushCommitteeOnly;
+                        const isAttended = isEditingEvents ? !!editedValues[key] : !!selectedPnmForDetails[key];
+                        const eventName = EVENT_HEADERS[i] || `Event ${i + 1}`;
+
+                        return (
+                          <div
+                            key={key}
+                            className={`flex items-center justify-between py-1 px-2 rounded border text-xs shadow-2xs transition-colors ${
+                              isEditingEvents
+                                ? "bg-white border-zinc-300 hover:border-zinc-400 cursor-pointer select-none"
+                                : "bg-white border-zinc-200/80"
                             }`}
-                            title={ev.attended ? "Attended" : "Absent"}
-                          />
-                        </div>
-                      ))}
+                            onClick={() => {
+                              if (isEditingEvents) {
+                                setEditedValues((prev) => ({
+                                  ...prev,
+                                  [key]: !isAttended,
+                                }));
+                              }
+                            }}
+                          >
+                            <span className="font-medium text-zinc-700 truncate pr-2" title={eventName}>
+                              {eventName}
+                            </span>
+                            {isEditingEvents ? (
+                              <button
+                                type="button"
+                                className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 shadow-xs transition-all transform hover:scale-110 ${
+                                  isAttended
+                                    ? "bg-green-500 border-green-600 text-white"
+                                    : "bg-red-500 border-red-600 text-white"
+                                }`}
+                                title={`Click to mark as ${isAttended ? "Absent" : "Attended"}`}
+                              >
+                                <svg
+                                  className="w-2.5 h-2.5"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                  strokeWidth="2.5"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                                  />
+                                </svg>
+                              </button>
+                            ) : (
+                              <span
+                                className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 shadow-xs ${
+                                  isAttended
+                                    ? "bg-green-500 border-green-600"
+                                    : "bg-red-500 border-red-600"
+                                }`}
+                                title={isAttended ? "Attended" : "Absent"}
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
 

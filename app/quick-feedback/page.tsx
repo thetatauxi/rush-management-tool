@@ -22,11 +22,31 @@ export default function QuickFeedback() {
   const [comment, setComment] = useState("");
   const [submitterName, setSubmitterName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [loggedInUserName, setLoggedInUserName] = useState("");
 
-  // Load PNMs on mount
+  // Load PNMs and user session on mount
   useEffect(() => {
-    async function fetchPnms() {
+    async function initPage() {
       try {
+        // Fetch session
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          const { data: profile } = await supabase
+            .from("profiles")
+            .select("first_name, last_name")
+            .eq("id", session.user.id)
+            .maybeSingle();
+
+          if (profile) {
+            const name = `${profile.first_name || ""} ${profile.last_name || ""}`.trim() || profile.first_name || "User";
+            setIsLoggedIn(true);
+            setLoggedInUserName(name);
+            setSubmitterName(name);
+          }
+        }
+
+        // Fetch PNMs
         const { data, error } = await supabase
           .from("pnms")
           .select("student_id, full_name, headshot_url")
@@ -35,13 +55,13 @@ export default function QuickFeedback() {
         if (error) throw error;
         setPnms(data || []);
       } catch (err) {
-        console.error("Error loading PNMs:", err);
+        console.error("Error initializing quick feedback:", err);
         toast.error("Failed to load potential new members list.");
       } finally {
         setIsLoading(false);
       }
     }
-    fetchPnms();
+    initPage();
   }, []);
 
   // Filter list as user types in search bar
@@ -86,7 +106,7 @@ export default function QuickFeedback() {
           feedback_type: feedbackType,
           comment: comment.trim(),
           is_approved: 0,
-          quick: true,
+          quick: !isLoggedIn,
         });
 
       if (error) throw error;
@@ -94,7 +114,7 @@ export default function QuickFeedback() {
       toast.success("Feedback submitted successfully! Pending approval.");
       // Reset form fields
       setComment("");
-      setSubmitterName("");
+      setSubmitterName(isLoggedIn ? loggedInUserName : "");
       setFeedbackType("Positive");
       setSelectedPnm(null);
       setSearchQuery("");
@@ -116,6 +136,12 @@ export default function QuickFeedback() {
           <p className="text-zinc-500 text-sm mt-1">
             Submit feedback anonymously to deliberation chairs.
           </p>
+          {isLoggedIn && (
+            <p className="text-xs font-semibold text-zinc-700 mt-2.5 inline-flex items-center gap-1.5 bg-zinc-200/70 border border-zinc-300 px-2.5 py-1 rounded-md">
+              <span className="w-2 h-2 rounded-full bg-green-500 inline-block animate-pulse" />
+              You are logged in as <span className="font-bold text-zinc-900">{loggedInUserName}</span>
+            </p>
+          )}
         </div>
 
         {/* Loading State */}
@@ -278,19 +304,31 @@ export default function QuickFeedback() {
 
                 {/* Submitter Name box */}
                 <div className="flex flex-col gap-1.5">
-                  <label
-                    htmlFor="submitterName"
-                    className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block"
-                  >
-                    Submitter Name
-                  </label>
+                  <div className="flex justify-between items-center">
+                    <label
+                      htmlFor="submitterName"
+                      className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider block"
+                    >
+                      Submitter Name
+                    </label>
+                    {isLoggedIn && (
+                      <span className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-200 px-2 py-0.5 rounded">
+                        ✓ Verified Account
+                      </span>
+                    )}
+                  </div>
                   <input
                     id="submitterName"
                     type="text"
                     value={submitterName}
                     onChange={(e) => setSubmitterName(e.target.value)}
                     placeholder="e.g. John Doe"
-                    className="w-full px-3 py-2 text-sm border border-zinc-300 rounded-lg bg-white text-zinc-900 focus:outline-none focus:ring-2 focus:ring-red-750 placeholder-zinc-350"
+                    disabled={isLoggedIn}
+                    className={`w-full px-3 py-2 text-sm border rounded-lg ${
+                      isLoggedIn
+                        ? "border-zinc-300 bg-zinc-100/90 text-zinc-600 cursor-not-allowed select-none font-medium"
+                        : "border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-2 focus:ring-red-750 placeholder-zinc-350"
+                    }`}
                     required
                   />
                 </div>
@@ -311,10 +349,10 @@ export default function QuickFeedback() {
         {/* Back Link */}
         <div className="text-center">
           <Link
-            href="/login"
+            href={isLoggedIn ? "/" : "/login"}
             className="text-xs font-semibold text-zinc-450 hover:text-zinc-650 transition-colors"
           >
-            &larr; Back to Login
+            {isLoggedIn ? "← Back to Dashboard" : "← Back to Login"}
           </Link>
         </div>
       </div>
