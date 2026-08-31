@@ -3,13 +3,15 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
 
 export default function ResetPassword() {
   const router = useRouter();
   const [cleared, setCleared] = useState(false);
 
-  const handleClear = () => {
+  const handleClear = async () => {
     localStorage.removeItem("password");
+    await supabase.auth.signOut();
     setCleared(true);
   };
 
@@ -17,16 +19,16 @@ export default function ResetPassword() {
     <div className="flex min-h-screen items-center justify-center font-sans">
       <main className="bg-zinc-50 rounded-lg p-6 w-full md:w-1/2 max-w-md">
         <h1 className="text-3xl font-mono font-bold underline decoration-red-300 mb-6">
-          Reset Password
+          Reset Session
         </h1>
 
         {!cleared ? (
           <div className="flex flex-col gap-4">
             <p className="text-gray-700">
-              This will clear your saved session. You&apos;ll need to enter the password again on login.
+              This will clear your saved session and sign you out. You&apos;ll need to enter your username and password again on login.
             </p>
             <p className="text-sm text-gray-500">
-              Need a new password? Contact your chapter admin to update it in the Google Sheet.
+              Need to reset your credentials? Contact the Website Chair to manage your account in Supabase.
             </p>
             <div className="flex gap-3 mt-2">
               <button
@@ -49,10 +51,10 @@ export default function ResetPassword() {
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
-              <span className="font-medium">Session cleared</span>
+              <span className="font-medium">Logged out successfully</span>
             </div>
             <p className="text-gray-600 text-sm">
-              Your saved password has been removed.
+              Your session has been cleared.
             </p>
             <Link
               href="/login"

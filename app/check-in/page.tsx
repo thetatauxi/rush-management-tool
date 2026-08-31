@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { appendToLocalStorageCsv } from "@/lib/localStorageCsv";
 import { EVENT_HEADERS } from "@/lib/pnmConstants";
+import { supabase } from "@/lib/supabaseClient";
 
 const CHECKIN_BACKUP_KEY = "checkInCsvBackup";
 const CHECKIN_BACKUP_HEADERS = ["timestamp", "eventType", "idNumber"];
@@ -16,6 +17,7 @@ export default function CheckIn() {
   const router = useRouter();
   const idNumberInputRef = useRef<HTMLInputElement>(null);
 
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const [kioskMode, setKioskMode] = useState<KioskMode>("event-selection");
   const [idNumber, setIdNumber] = useState("");
   const [eventType, setEventType] = useState(EVENT_HEADERS[0]);
@@ -25,12 +27,25 @@ export default function CheckIn() {
   const [showError, setShowError] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
+  // Check Supabase authentication
+  useEffect(() => {
+    async function checkAuth() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push("/login");
+      } else {
+        setCheckingAuth(false);
+      }
+    }
+    checkAuth();
+  }, [router]);
+
   // Auto-focus on ID number input for barcode scanning when in scanning mode
   useEffect(() => {
-    if (kioskMode === "scanning") {
+    if (!checkingAuth && kioskMode === "scanning") {
       idNumberInputRef.current?.focus();
     }
-  }, [kioskMode]);
+  }, [kioskMode, checkingAuth]);
 
   // Auto-submit when Enter is pressed (barcode scanners send Enter after scanning)
   const handleIdNumberKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -62,43 +77,26 @@ export default function CheckIn() {
     ]);
 
     try {
-      const password = localStorage.getItem("password");
-      if (!password) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
         router.push("/login");
         return;
       }
 
-      const response = await fetch("/api/proxy", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          action: "check-in",
-          idNumber: sanitizedIdNumber,
-          eventType: eventType,
-          password: password,
-        }),
-      });
+      // 1. Find the PNM by Student ID
+      const { data: pnm, error: queryError } = await supabase
+        .from("pnms")
+        .select("full_name")
+        .eq("student_id", sanitizedIdNumber)
+        .maybeSingle();
 
-      const data = await response.json();
+      if (queryError) {
+        throw new Error(`Lookup Error: ${queryError.message}`);
+      }
 
-      if (response.ok && data.ok) {
-        setCheckedInName(data.name || "");
-        setShowSuccess(true);
-        setIdNumber("");
-        // Auto-return to scanning after 2 seconds
-        setTimeout(() => {
-          setShowSuccess(false);
-          setCheckedInName("");
-          setTimeout(() => {
-            idNumberInputRef.current?.focus();
-          }, 100);
-        }, 2000);
-      } else {
-        // Show error, but keep in scanning mode
-        const message = data.error || "Failed to check in";
-        toast.error(message);
+      if (!pnm) {
+        // PNM not found - trigger error path
+        const message = "Student ID not found. Please register at Add PNMs first.";
         setErrorMessage(message);
         setShowError(true);
         setIdNumber("");
@@ -109,7 +107,35 @@ export default function CheckIn() {
             idNumberInputRef.current?.focus();
           }, 100);
         }, 2500);
+        return;
       }
+
+      // 2. Map current selected eventType to correct column (event_1 ... event_6)
+      const eventIndex = EVENT_HEADERS.indexOf(eventType);
+      const eventKey = `event_${eventIndex + 1}`;
+
+      // 3. Mark event attendance as true
+      const { error: updateError } = await supabase
+        .from("pnms")
+        .update({ [eventKey]: true })
+        .eq("student_id", sanitizedIdNumber);
+
+      if (updateError) {
+        throw new Error(`Update Attendance Error: ${updateError.message}`);
+      }
+
+      // Check-in succeeded
+      setCheckedInName(pnm.full_name);
+      setShowSuccess(true);
+      setIdNumber("");
+      // Auto-return to scanning after 2 seconds
+      setTimeout(() => {
+        setShowSuccess(false);
+        setCheckedInName("");
+        setTimeout(() => {
+          idNumberInputRef.current?.focus();
+        }, 100);
+      }, 2000);
     } catch (err) {
       console.error("Check-in error:", err);
       toast.error("Failed to connect to server. Please try again.");
@@ -134,6 +160,14 @@ export default function CheckIn() {
       handleCheckIn();
     }
   };
+
+  if (checkingAuth) {
+    return (
+      <div className="flex min-h-screen items-center justify-center font-sans">
+        <div className="text-xl font-medium text-gray-600">Loading session...</div>
+      </div>
+    );
+  }
 
   // Event Selection Screen
   if (kioskMode === "event-selection") {
