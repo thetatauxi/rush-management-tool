@@ -1,10 +1,10 @@
 export const EVENT_HEADERS = [
-  "1/29 | Info & Community Service",
-  "1/30 | Info & PD",
-  "2/2 | Speed Networking",
-  "2/3 | Brotherhood Night",
-  "2/5 | Engineering Challenge",
-  "2/6 | Food Friday"
+  "9/10 | Info & PD",
+  "9/11 | Info & Comm Serve",
+  "9/14 | Speed Networking",
+  "9/15 | Field Day",
+  "9/17 | Engineering Challenge",
+  "9/18 | Food Friday"
 ];
 
 export type PNMRecord = {
@@ -17,4 +17,3 @@ export type PNMRecord = {
   "Total Events Attended": number;
   [key: string]: unknown;
 };
-
