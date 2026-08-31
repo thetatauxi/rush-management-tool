@@ -1142,145 +1142,172 @@ export default function VoteDashboard() {
                     )}
                   </div>
 
-                  {/* Stacked Event Attendance List */}
-                  <div className="flex flex-col gap-1.5 p-3 bg-zinc-50 rounded-lg border border-zinc-200">
-                    <div className="flex justify-between items-center">
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
-                        Event Attendance
-                      </span>
-                      {isEditing && !isRushCommitteeOnly && (
-                        <span className="text-[9px] text-zinc-400 font-semibold italic">
-                          Click to toggle
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-1.5 mt-0.5">
-                      {(["event_1", "event_2", "event_3", "event_4", "event_5", "event_6"] as const).map((key, i) => {
-                        const isEditingEvents = isEditing && !isRushCommitteeOnly;
-                        const isAttended = isEditingEvents ? !!editedValues[key] : !!activePnm[key];
-                        const eventName = EVENT_HEADERS[i] || `Event ${i + 1}`;
+                  {/* Major / Year */}
+                  <div className="bg-zinc-50 p-2.5 rounded-lg border border-zinc-200">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
+                      Major / Year
+                    </span>
+                    {isEditing && !isRushCommitteeOnly ? (
+                      <div className="flex flex-col gap-1.5">
+                        <input
+                          type="text"
+                          value={editedValues.major || ""}
+                          onChange={(e) => setEditedValues({ ...editedValues, major: e.target.value })}
+                          className="w-full text-xs border border-zinc-300 rounded px-2 py-1 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                          placeholder="Computer Engineering"
+                        />
+                        <select
+                          value={editedValues.year || "Freshman"}
+                          onChange={(e) => setEditedValues({ ...editedValues, year: e.target.value })}
+                          className="w-full text-xs border border-zinc-300 rounded px-2 py-1 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                        >
+                          <option value="Freshman">Freshman</option>
+                          <option value="Sophomore">Sophomore</option>
+                          <option value="Junior">Junior</option>
+                          <option value="Senior">Senior</option>
+                        </select>
+                      </div>
+                    ) : (
+                      <p className="font-bold text-zinc-800 text-xs truncate" title={`${activePnm.major || "Undeclared"} — ${activePnm.year || "N/A"}`}>
+                        {activePnm.major || "Undeclared"} — {activePnm.year || "N/A"}
+                      </p>
+                    )}
+                  </div>
 
-                        return (
-                          <div
-                            key={key}
-                            className={`flex items-center justify-between py-1 px-2 rounded border text-xs shadow-2xs transition-colors ${
-                              isEditingEvents
-                                ? "bg-white border-zinc-300 hover:border-zinc-400 cursor-pointer select-none"
-                                : "bg-white border-zinc-200/80"
-                            }`}
-                            onClick={() => {
-                              if (isEditingEvents) {
-                                setEditedValues((prev) => ({
-                                  ...prev,
-                                  [key]: !isAttended,
-                                }));
-                              }
-                            }}
-                          >
-                            <span className="font-medium text-zinc-700 truncate pr-2" title={eventName}>
-                              {eventName}
-                            </span>
-                            {isEditingEvents ? (
-                              <button
-                                type="button"
-                                className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 shadow-xs transition-all transform hover:scale-110 ${
-                                  isAttended
-                                    ? "bg-green-500 border-green-600 text-white"
-                                    : "bg-red-500 border-red-600 text-white"
-                                }`}
-                                title={`Click to mark as ${isAttended ? "Absent" : "Attended"}`}
-                              >
-                                <svg
-                                  className="w-2.5 h-2.5"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                  strokeWidth="2.5"
+                  {/* Stacked Event Attendance List & Attached Absence Info */}
+                  <div className="flex flex-col gap-2.5 p-3 bg-zinc-50 rounded-lg border border-zinc-200">
+                    {/* Attendance Header & Rows */}
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                          Event Attendance
+                        </span>
+                        {isEditing && !isRushCommitteeOnly && (
+                          <span className="text-[9px] text-zinc-400 font-semibold italic">
+                            Click to toggle
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1.5 mt-0.5">
+                        {(["event_1", "event_2", "event_3", "event_4", "event_5", "event_6"] as const).map((key, i) => {
+                          const isEditingEvents = isEditing && !isRushCommitteeOnly;
+                          const isAttended = isEditingEvents ? !!editedValues[key] : !!activePnm[key];
+                          const eventName = EVENT_HEADERS[i] || `Event ${i + 1}`;
+
+                          return (
+                            <div
+                              key={key}
+                              className={`flex items-center justify-between py-1 px-2 rounded border text-xs shadow-2xs transition-colors ${
+                                isEditingEvents
+                                  ? "bg-white border-zinc-300 hover:border-zinc-400 cursor-pointer select-none"
+                                  : "bg-white border-zinc-200/80"
+                              }`}
+                              onClick={() => {
+                                if (isEditingEvents) {
+                                  setEditedValues((prev) => ({
+                                    ...prev,
+                                    [key]: !isAttended,
+                                  }));
+                                }
+                              }}
+                            >
+                              <span className="font-medium text-zinc-700 truncate pr-2" title={eventName}>
+                                {eventName}
+                              </span>
+                              {isEditingEvents ? (
+                                <button
+                                  type="button"
+                                  className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 shadow-xs transition-all transform hover:scale-110 ${
+                                    isAttended
+                                      ? "bg-green-500 border-green-600 text-white"
+                                      : "bg-red-500 border-red-600 text-white"
+                                  }`}
+                                  title={`Click to mark as ${isAttended ? "Absent" : "Attended"}`}
                                 >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                                  />
-                                </svg>
-                              </button>
-                            ) : (
-                              <span
-                                className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 shadow-xs ${
-                                  isAttended
-                                    ? "bg-green-500 border-green-600"
-                                    : "bg-red-500 border-red-600"
-                                }`}
-                                title={isAttended ? "Attended" : "Absent"}
-                              />
-                            )}
-                          </div>
-                        );
-                      })}
+                                  <svg
+                                    className="w-2.5 h-2.5"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                    strokeWidth="2.5"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                                    />
+                                  </svg>
+                                </button>
+                              ) : (
+                                <span
+                                  className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 shadow-xs ${
+                                    isAttended
+                                      ? "bg-green-500 border-green-600"
+                                      : "bg-red-500 border-red-600"
+                                  }`}
+                                  title={isAttended ? "Attended" : "Absent"}
+                                />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Attached Absence Info with separate border */}
+                    <div className="border-t border-zinc-200 pt-2.5 flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                          Absence Form (#)
+                        </span>
+                        {isEditing && !isRushCommitteeOnly ? (
+                          <input
+                            type="number"
+                            value={editedValues.absence_form_num ?? 0}
+                            onChange={(e) => setEditedValues({ ...editedValues, absence_form_num: parseInt(e.target.value) || 0 })}
+                            className="w-16 text-xs text-right border border-zinc-300 rounded px-1.5 py-0.5 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                          />
+                        ) : (
+                          <span className="font-mono font-bold text-zinc-800 text-xs px-2 py-0.5 bg-white border border-zinc-200 rounded">
+                            {activePnm.absence_form_num ?? 0}
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
+                          Reason for Absence
+                        </span>
+                        {isEditing && !isRushCommitteeOnly ? (
+                          <textarea
+                            value={editedValues.absence_reason || ""}
+                            onChange={(e) => setEditedValues({ ...editedValues, absence_reason: e.target.value })}
+                            className="w-full text-xs border border-zinc-300 rounded px-2 py-1 h-14 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                            placeholder="Reason details..."
+                          />
+                        ) : (
+                          <p className="text-zinc-700 text-xs italic leading-relaxed whitespace-pre-line bg-white p-2 rounded border border-zinc-200/80">
+                            {activePnm.absence_reason || "None specified"}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Major, Year, Absence */}
-                  <div className="mt-2 bg-zinc-50 p-3 rounded-lg border border-zinc-200 flex flex-col gap-3">
-                    <div>
-                      <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1">Major / Year</span>
-                      {isEditing && !isRushCommitteeOnly ? (
-                        <div className="flex flex-col gap-1.5">
-                          <input
-                            type="text"
-                            value={editedValues.major || ""}
-                            onChange={(e) => setEditedValues({ ...editedValues, major: e.target.value })}
-                            className="w-full text-sm border border-zinc-300 rounded px-2 py-1 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                            placeholder="Computer Engineering"
-                          />
-                          <select
-                            value={editedValues.year || "Freshman"}
-                            onChange={(e) => setEditedValues({ ...editedValues, year: e.target.value })}
-                            className="w-full text-sm border border-zinc-300 rounded px-2 py-1 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                          >
-                            <option value="Freshman">Freshman</option>
-                            <option value="Sophomore">Sophomore</option>
-                            <option value="Junior">Junior</option>
-                            <option value="Senior">Senior</option>
-                          </select>
-                        </div>
-                      ) : (
-                        <p className="font-semibold text-zinc-800 text-sm">
-                          {activePnm.major || "Undeclared"} — {activePnm.year || "N/A"}
-                        </p>
-                      )}
+                  {/* Email and Student ID (Small Side-by-Side Block) */}
+                  <div className="bg-zinc-50 p-2.5 rounded-lg border border-zinc-200 flex items-center justify-between text-[11px] text-zinc-600 gap-2">
+                    <div className="truncate min-w-0 flex-1">
+                      <span className="font-semibold text-zinc-400 block text-[9px] uppercase tracking-wider">Email</span>
+                      <span className="font-mono text-zinc-700 truncate block text-xs" title={activePnm.email}>
+                        {activePnm.email}
+                      </span>
                     </div>
-
-                    <div>
-                      <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1">Absence Form (#)</span>
-                      {isEditing && !isRushCommitteeOnly ? (
-                        <input
-                          type="number"
-                          value={editedValues.absence_form_num ?? 0}
-                          onChange={(e) => setEditedValues({ ...editedValues, absence_form_num: parseInt(e.target.value) || 0 })}
-                          className="w-full text-sm border border-zinc-300 rounded px-2 py-1 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                        />
-                      ) : (
-                        <p className="font-semibold text-zinc-800 text-sm">
-                          {activePnm.absence_form_num ?? 0}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1">Reason for Absence</span>
-                      {isEditing && !isRushCommitteeOnly ? (
-                        <textarea
-                          value={editedValues.absence_reason || ""}
-                          onChange={(e) => setEditedValues({ ...editedValues, absence_reason: e.target.value })}
-                          className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-20 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                          placeholder="Reason details..."
-                        />
-                      ) : (
-                        <p className="text-zinc-700 text-sm italic leading-relaxed whitespace-pre-line">
-                          {activePnm.absence_reason || "None specified"}
-                        </p>
-                      )}
+                    <div className="h-6 w-px bg-zinc-200 flex-shrink-0" />
+                    <div className="text-right flex-shrink-0">
+                      <span className="font-semibold text-zinc-400 block text-[9px] uppercase tracking-wider">Student ID</span>
+                      <span className="font-mono text-zinc-700 font-bold block text-xs">
+                        {activePnm.student_id}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1542,8 +1569,8 @@ export default function VoteDashboard() {
                       <h3 className="font-bold text-lg text-zinc-900 truncate leading-tight" title={pnm.full_name}>
                         {pnm.full_name}
                       </h3>
-                      <p className="text-zinc-500 text-xs font-mono truncate mb-2" title={pnm.email}>
-                        {pnm.email}
+                      <p className="text-zinc-600 text-xs font-semibold truncate mb-2" title={`${pnm.major || "Undeclared"} — ${pnm.year || "N/A"}`}>
+                        {pnm.major || "Undeclared"} — {pnm.year || "N/A"}
                       </p>
 
                       {/* 6 Attendance Dots */}
@@ -1813,145 +1840,172 @@ export default function VoteDashboard() {
                     )}
                   </div>
 
-                  {/* Stacked Event Attendance List */}
-                  <div className="flex flex-col gap-1.5 p-3 bg-zinc-50 rounded-lg border border-zinc-200">
-                    <div className="flex justify-between items-center">
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
-                        Event Attendance
-                      </span>
-                      {isEditing && !isRushCommitteeOnly && (
-                        <span className="text-[9px] text-zinc-400 font-semibold italic">
-                          Click to toggle
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-1.5 mt-0.5">
-                      {(["event_1", "event_2", "event_3", "event_4", "event_5", "event_6"] as const).map((key, i) => {
-                        const isEditingEvents = isEditing && !isRushCommitteeOnly;
-                        const isAttended = isEditingEvents ? !!editedValues[key] : !!selectedPnmForDetails[key];
-                        const eventName = EVENT_HEADERS[i] || `Event ${i + 1}`;
+                  {/* Major / Year */}
+                  <div className="bg-zinc-50 p-2.5 rounded-lg border border-zinc-200">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
+                      Major / Year
+                    </span>
+                    {isEditing && !isRushCommitteeOnly ? (
+                      <div className="flex flex-col gap-1.5">
+                        <input
+                          type="text"
+                          value={editedValues.major || ""}
+                          onChange={(e) => setEditedValues({ ...editedValues, major: e.target.value })}
+                          className="w-full text-xs border border-zinc-300 rounded px-2 py-1 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                          placeholder="Computer Engineering"
+                        />
+                        <select
+                          value={editedValues.year || "Freshman"}
+                          onChange={(e) => setEditedValues({ ...editedValues, year: e.target.value })}
+                          className="w-full text-xs border border-zinc-300 rounded px-2 py-1 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                        >
+                          <option value="Freshman">Freshman</option>
+                          <option value="Sophomore">Sophomore</option>
+                          <option value="Junior">Junior</option>
+                          <option value="Senior">Senior</option>
+                        </select>
+                      </div>
+                    ) : (
+                      <p className="font-bold text-zinc-800 text-xs truncate" title={`${selectedPnmForDetails.major || "Undeclared"} — ${selectedPnmForDetails.year || "N/A"}`}>
+                        {selectedPnmForDetails.major || "Undeclared"} — {selectedPnmForDetails.year || "N/A"}
+                      </p>
+                    )}
+                  </div>
 
-                        return (
-                          <div
-                            key={key}
-                            className={`flex items-center justify-between py-1 px-2 rounded border text-xs shadow-2xs transition-colors ${
-                              isEditingEvents
-                                ? "bg-white border-zinc-300 hover:border-zinc-400 cursor-pointer select-none"
-                                : "bg-white border-zinc-200/80"
-                            }`}
-                            onClick={() => {
-                              if (isEditingEvents) {
-                                setEditedValues((prev) => ({
-                                  ...prev,
-                                  [key]: !isAttended,
-                                }));
-                              }
-                            }}
-                          >
-                            <span className="font-medium text-zinc-700 truncate pr-2" title={eventName}>
-                              {eventName}
-                            </span>
-                            {isEditingEvents ? (
-                              <button
-                                type="button"
-                                className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 shadow-xs transition-all transform hover:scale-110 ${
-                                  isAttended
-                                    ? "bg-green-500 border-green-600 text-white"
-                                    : "bg-red-500 border-red-600 text-white"
-                                }`}
-                                title={`Click to mark as ${isAttended ? "Absent" : "Attended"}`}
-                              >
-                                <svg
-                                  className="w-2.5 h-2.5"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                  strokeWidth="2.5"
+                  {/* Stacked Event Attendance List & Attached Absence Info */}
+                  <div className="flex flex-col gap-2.5 p-3 bg-zinc-50 rounded-lg border border-zinc-200">
+                    {/* Attendance Header & Rows */}
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                          Event Attendance
+                        </span>
+                        {isEditing && !isRushCommitteeOnly && (
+                          <span className="text-[9px] text-zinc-400 font-semibold italic">
+                            Click to toggle
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-1.5 mt-0.5">
+                        {(["event_1", "event_2", "event_3", "event_4", "event_5", "event_6"] as const).map((key, i) => {
+                          const isEditingEvents = isEditing && !isRushCommitteeOnly;
+                          const isAttended = isEditingEvents ? !!editedValues[key] : !!selectedPnmForDetails[key];
+                          const eventName = EVENT_HEADERS[i] || `Event ${i + 1}`;
+
+                          return (
+                            <div
+                              key={key}
+                              className={`flex items-center justify-between py-1 px-2 rounded border text-xs shadow-2xs transition-colors ${
+                                isEditingEvents
+                                  ? "bg-white border-zinc-300 hover:border-zinc-400 cursor-pointer select-none"
+                                  : "bg-white border-zinc-200/80"
+                              }`}
+                              onClick={() => {
+                                if (isEditingEvents) {
+                                  setEditedValues((prev) => ({
+                                    ...prev,
+                                    [key]: !isAttended,
+                                  }));
+                                }
+                              }}
+                            >
+                              <span className="font-medium text-zinc-700 truncate pr-2" title={eventName}>
+                                {eventName}
+                              </span>
+                              {isEditingEvents ? (
+                                <button
+                                  type="button"
+                                  className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 shadow-xs transition-all transform hover:scale-110 ${
+                                    isAttended
+                                      ? "bg-green-500 border-green-600 text-white"
+                                      : "bg-red-500 border-red-600 text-white"
+                                  }`}
+                                  title={`Click to mark as ${isAttended ? "Absent" : "Attended"}`}
                                 >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                                  />
-                                </svg>
-                              </button>
-                            ) : (
-                              <span
-                                className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 shadow-xs ${
-                                  isAttended
-                                    ? "bg-green-500 border-green-600"
-                                    : "bg-red-500 border-red-600"
-                                }`}
-                                title={isAttended ? "Attended" : "Absent"}
-                              />
-                            )}
-                          </div>
-                        );
-                      })}
+                                  <svg
+                                    className="w-2.5 h-2.5"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                    strokeWidth="2.5"
+                                  >
+                                    <path
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                                    />
+                                  </svg>
+                                </button>
+                              ) : (
+                                <span
+                                  className={`w-3.5 h-3.5 rounded-full border flex-shrink-0 shadow-xs ${
+                                    isAttended
+                                      ? "bg-green-500 border-green-600"
+                                      : "bg-red-500 border-red-600"
+                                  }`}
+                                  title={isAttended ? "Attended" : "Absent"}
+                                />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Attached Absence Info with separate border */}
+                    <div className="border-t border-zinc-200 pt-2.5 flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                          Absence Form (#)
+                        </span>
+                        {isEditing && !isRushCommitteeOnly ? (
+                          <input
+                            type="number"
+                            value={editedValues.absence_form_num ?? 0}
+                            onChange={(e) => setEditedValues({ ...editedValues, absence_form_num: parseInt(e.target.value) || 0 })}
+                            className="w-16 text-xs text-right border border-zinc-300 rounded px-1.5 py-0.5 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                          />
+                        ) : (
+                          <span className="font-mono font-bold text-zinc-800 text-xs px-2 py-0.5 bg-white border border-zinc-200 rounded">
+                            {selectedPnmForDetails.absence_form_num ?? 0}
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
+                          Reason for Absence
+                        </span>
+                        {isEditing && !isRushCommitteeOnly ? (
+                          <textarea
+                            value={editedValues.absence_reason || ""}
+                            onChange={(e) => setEditedValues({ ...editedValues, absence_reason: e.target.value })}
+                            className="w-full text-xs border border-zinc-300 rounded px-2 py-1 h-14 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                            placeholder="Reason details..."
+                          />
+                        ) : (
+                          <p className="text-zinc-700 text-xs italic leading-relaxed whitespace-pre-line bg-white p-2 rounded border border-zinc-200/80">
+                            {selectedPnmForDetails.absence_reason || "None specified"}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Major, Year, Absence */}
-                  <div className="mt-2 bg-zinc-50 p-3 rounded-lg border border-zinc-200 flex flex-col gap-3">
-                    <div>
-                      <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1">Major / Year</span>
-                      {isEditing && !isRushCommitteeOnly ? (
-                        <div className="flex flex-col gap-1.5">
-                          <input
-                            type="text"
-                            value={editedValues.major || ""}
-                            onChange={(e) => setEditedValues({ ...editedValues, major: e.target.value })}
-                            className="w-full text-sm border border-zinc-300 rounded px-2 py-1 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                            placeholder="Computer Engineering"
-                          />
-                          <select
-                            value={editedValues.year || "Freshman"}
-                            onChange={(e) => setEditedValues({ ...editedValues, year: e.target.value })}
-                            className="w-full text-sm border border-zinc-300 rounded px-2 py-1 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                          >
-                            <option value="Freshman">Freshman</option>
-                            <option value="Sophomore">Sophomore</option>
-                            <option value="Junior">Junior</option>
-                            <option value="Senior">Senior</option>
-                          </select>
-                        </div>
-                      ) : (
-                        <p className="font-semibold text-zinc-800 text-sm">
-                          {selectedPnmForDetails.major || "Undeclared"} — {selectedPnmForDetails.year || "N/A"}
-                        </p>
-                      )}
+                  {/* Email and Student ID (Small Side-by-Side Block) */}
+                  <div className="bg-zinc-50 p-2.5 rounded-lg border border-zinc-200 flex items-center justify-between text-[11px] text-zinc-600 gap-2">
+                    <div className="truncate min-w-0 flex-1">
+                      <span className="font-semibold text-zinc-400 block text-[9px] uppercase tracking-wider">Email</span>
+                      <span className="font-mono text-zinc-700 truncate block text-xs" title={selectedPnmForDetails.email}>
+                        {selectedPnmForDetails.email}
+                      </span>
                     </div>
-
-                    <div>
-                      <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1">Absence Form (#)</span>
-                      {isEditing && !isRushCommitteeOnly ? (
-                        <input
-                          type="number"
-                          value={editedValues.absence_form_num ?? 0}
-                          onChange={(e) => setEditedValues({ ...editedValues, absence_form_num: parseInt(e.target.value) || 0 })}
-                          className="w-full text-sm border border-zinc-300 rounded px-2 py-1 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                        />
-                      ) : (
-                        <p className="font-semibold text-zinc-800 text-sm">
-                          {selectedPnmForDetails.absence_form_num ?? 0}
-                        </p>
-                      )}
-                    </div>
-
-                    <div>
-                      <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1">Reason for Absence</span>
-                      {isEditing && !isRushCommitteeOnly ? (
-                        <textarea
-                          value={editedValues.absence_reason || ""}
-                          onChange={(e) => setEditedValues({ ...editedValues, absence_reason: e.target.value })}
-                          className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-20 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                          placeholder="Reason details..."
-                        />
-                      ) : (
-                        <p className="text-zinc-700 text-sm italic leading-relaxed whitespace-pre-line">
-                          {selectedPnmForDetails.absence_reason || "None specified"}
-                        </p>
-                      )}
+                    <div className="h-6 w-px bg-zinc-200 flex-shrink-0" />
+                    <div className="text-right flex-shrink-0">
+                      <span className="font-semibold text-zinc-400 block text-[9px] uppercase tracking-wider">Student ID</span>
+                      <span className="font-mono text-zinc-700 font-bold block text-xs">
+                        {selectedPnmForDetails.student_id}
+                      </span>
                     </div>
                   </div>
                 </div>
