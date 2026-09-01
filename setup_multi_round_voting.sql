@@ -1,12 +1,13 @@
 -- ==============================================================================
--- Migration: Complete Reorganization of Multi-Round Voting System
+-- Migration: Clean Unified Multi-Round Voting System
 -- ==============================================================================
 
--- 1. Drop old functions to avoid signature conflicts and overloads
+-- 1. Drop old & obsolete functions
 DROP FUNCTION IF EXISTS public.go_live(integer);
 DROP FUNCTION IF EXISTS public.go_live(integer, integer);
 DROP FUNCTION IF EXISTS public.start_round(integer, integer);
 DROP FUNCTION IF EXISTS public.end_round(integer, integer);
+DROP FUNCTION IF EXISTS public.evaluate_current_round();
 DROP FUNCTION IF EXISTS public.open_candidate_voting(text);
 DROP FUNCTION IF EXISTS public.open_candidate_voting();
 DROP FUNCTION IF EXISTS public.open_pnm_voting(text);
@@ -48,7 +49,35 @@ CREATE TABLE public."voting-ops" (
 INSERT INTO public."voting-ops" (id, section, round, round_status, voting_status, app_committee_enabled)
 VALUES (1, 1, 1, 'idle', 'closed', false);
 
--- 3. Configure "member_votes" Table & Unique Constraint
+-- 3. Configure "voting-thresholds" Table
+CREATE TABLE IF NOT EXISTS public."voting-thresholds" (
+    id text PRIMARY KEY,
+    section integer NOT NULL,
+    round integer NOT NULL,
+    min_yn_deny numeric NOT NULL DEFAULT 60.0,
+    min_yn_approve numeric NOT NULL DEFAULT 85.0,
+    max_at_approve numeric NOT NULL DEFAULT 50.0,
+    fill_quota_spots boolean NOT NULL DEFAULT false,
+    description text,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+INSERT INTO public."voting-thresholds" (id, section, round, min_yn_deny, min_yn_approve, max_at_approve, fill_quota_spots, description)
+VALUES
+    ('s1-r1', 1, 1, 60.0, 85.0, 50.0, false, 'Denied: Y/N < 60% | Approved: Y/N > 85% & A/T < 50% | In Contest: 60% <= Y/N <= 85% or (A/T >= 50% & Y/N > 85%)'),
+    ('s1-r2', 1, 2, 65.0, -1, -1, true, 'Denied: Y/N < 65% | Approved: Fill remaining invite quota spots with top Y/N% (>= 65%)'),
+    ('s2-r1', 2, 1, 60.0, 85.0, 50.0, false, 'Denied: Y/N < 60% | Approved: Y/N > 85% & A/T < 50% | In Contest: 60% <= Y/N <= 85% or (A/T >= 50% & Y/N > 85%)'),
+    ('s2-r2', 2, 2, 65.0, 80.0, -1, false, 'Denied: Y/N < 65% | Approved: Y/N > 80% | In Contest: 65% <= Y/N <= 80%'),
+    ('s2-r3', 2, 3, 75.0, -1, -1, true, 'Denied: Y/N < 75% | Approved: Fill remaining bid quota spots with top Y/N% (>= 75%)')
+ON CONFLICT (id) DO UPDATE SET
+    min_yn_deny = EXCLUDED.min_yn_deny,
+    min_yn_approve = EXCLUDED.min_yn_approve,
+    max_at_approve = EXCLUDED.max_at_approve,
+    fill_quota_spots = EXCLUDED.fill_quota_spots,
+    description = EXCLUDED.description,
+    updated_at = now();
+
+-- 4. Configure "member_votes" Table & Unique Constraint
 CREATE TABLE IF NOT EXISTS public.member_votes (
     id bigserial PRIMARY KEY,
     user_id uuid NOT NULL,
@@ -60,12 +89,10 @@ CREATE TABLE IF NOT EXISTS public.member_votes (
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
--- Ensure section_num, created_at, and updated_at exist
 ALTER TABLE public.member_votes ADD COLUMN IF NOT EXISTS section_num integer NOT NULL DEFAULT 1;
 ALTER TABLE public.member_votes ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 ALTER TABLE public.member_votes ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 
--- Drop all old unique constraints & indexes on member_votes
 DO $$
 DECLARE
     r RECORD;
@@ -84,7 +111,6 @@ DROP INDEX IF EXISTS public.member_votes_student_id_user_id_round_num_idx;
 DROP INDEX IF EXISTS public.member_votes_user_id_student_id_round_num_idx;
 DROP INDEX IF EXISTS public.member_votes_user_student_sec_rnd_idx;
 
--- Remove duplicate records
 DELETE FROM public.member_votes a USING public.member_votes b
 WHERE a.id < b.id 
   AND a.user_id = b.user_id 
@@ -92,7 +118,6 @@ WHERE a.id < b.id
   AND a.section_num = b.section_num 
   AND a.round_num = b.round_num;
 
--- Create composite 4-column unique constraint
 CREATE UNIQUE INDEX member_votes_user_student_sec_rnd_idx 
 ON public.member_votes (user_id, student_id, section_num, round_num);
 
@@ -100,7 +125,7 @@ ALTER TABLE public.member_votes
 ADD CONSTRAINT member_votes_user_student_sec_rnd_key 
 UNIQUE USING INDEX member_votes_user_student_sec_rnd_idx;
 
--- 4. Create Section & Round Tally Tables
+-- 5. Create Section & Round Tally Tables
 DO $$
 DECLARE
     tbl text;
@@ -124,8 +149,9 @@ BEGIN
     END LOOP;
 END $$;
 
--- 5. Enable Row Level Security & Policies
+-- 6. Enable Row Level Security & Policies
 ALTER TABLE public."voting-ops" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public."voting-thresholds" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."voting-s1-r1" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."voting-s1-r2" ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public."voting-s2-r1" ENABLE ROW LEVEL SECURITY;
@@ -137,7 +163,7 @@ DO $$
 DECLARE
     tbl text;
 BEGIN
-    FOR tbl IN SELECT unnest(ARRAY['voting-ops', 'voting-s1-r1', 'voting-s1-r2', 'voting-s2-r1', 'voting-s2-r2', 'voting-s2-r3', 'member_votes']) LOOP
+    FOR tbl IN SELECT unnest(ARRAY['voting-ops', 'voting-thresholds', 'voting-s1-r1', 'voting-s1-r2', 'voting-s2-r1', 'voting-s2-r2', 'voting-s2-r3', 'member_votes']) LOOP
         EXECUTE format('DROP POLICY IF EXISTS "Allow all for authenticated users" ON public.%I', tbl);
         EXECUTE format('CREATE POLICY "Allow all for authenticated users" ON public.%I FOR ALL TO authenticated USING (true) WITH CHECK (true)', tbl);
         EXECUTE format('DROP POLICY IF EXISTS "Allow select for public" ON public.%I', tbl);
@@ -145,8 +171,8 @@ BEGIN
     END LOOP;
 END $$;
 
--- Explicit table and sequence grants
 GRANT ALL ON TABLE public."voting-ops" TO authenticated, anon, service_role;
+GRANT ALL ON TABLE public."voting-thresholds" TO authenticated, anon, service_role;
 GRANT ALL ON TABLE public."voting-s1-r1" TO authenticated, anon, service_role;
 GRANT ALL ON TABLE public."voting-s1-r2" TO authenticated, anon, service_role;
 GRANT ALL ON TABLE public."voting-s2-r1" TO authenticated, anon, service_role;
@@ -155,7 +181,132 @@ GRANT ALL ON TABLE public."voting-s2-r3" TO authenticated, anon, service_role;
 GRANT ALL ON TABLE public.member_votes TO authenticated, anon, service_role;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated, anon, service_role;
 
--- 6. Stored Procedure: initialize_round_data
+-- 7. Stored Procedure: evaluate_round_thresholds (Accurate Quota Filling and Thresholds)
+CREATE OR REPLACE FUNCTION public.evaluate_round_thresholds(p_section integer, p_round integer)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_table text;
+    v_thresh_id text;
+    v_deny_yn numeric := 60.0;
+    v_approve_yn numeric := 85.0;
+    v_approve_at numeric := 50.0;
+    v_fill_quota boolean := false;
+    v_target integer;
+    v_approved_prev integer := 0;
+    v_remaining_spots integer := 999;
+BEGIN
+    v_table := 'voting-s' || p_section || '-r' || p_round;
+    v_thresh_id := 's' || p_section || '-r' || p_round;
+
+    IF p_section = 1 AND p_round = 1 THEN
+        v_deny_yn := 60.0; v_approve_yn := 85.0; v_approve_at := 50.0; v_fill_quota := false;
+    ELSIF p_section = 1 AND p_round = 2 THEN
+        v_deny_yn := 65.0; v_approve_yn := -1; v_approve_at := -1; v_fill_quota := true;
+    ELSIF p_section = 2 AND p_round = 1 THEN
+        v_deny_yn := 60.0; v_approve_yn := 85.0; v_approve_at := 50.0; v_fill_quota := false;
+    ELSIF p_section = 2 AND p_round = 2 THEN
+        v_deny_yn := 65.0; v_approve_yn := 80.0; v_approve_at := -1; v_fill_quota := false;
+    ELSIF p_section = 2 AND p_round = 3 THEN
+        v_deny_yn := 75.0; v_approve_yn := -1; v_approve_at := -1; v_fill_quota := true;
+    END IF;
+
+    BEGIN
+        SELECT min_yn_deny, min_yn_approve, max_at_approve, fill_quota_spots
+        INTO v_deny_yn, v_approve_yn, v_approve_at, v_fill_quota
+        FROM public."voting-thresholds"
+        WHERE id = v_thresh_id;
+    EXCEPTION WHEN others THEN
+        NULL;
+    END;
+
+    IF v_deny_yn IS NULL THEN v_deny_yn := 60.0; END IF;
+    IF v_approve_yn IS NULL THEN v_approve_yn := 85.0; END IF;
+    IF v_approve_at IS NULL THEN v_approve_at := 50.0; END IF;
+    IF v_fill_quota IS NULL THEN v_fill_quota := false; END IF;
+
+    IF v_fill_quota THEN
+        -- Calculate remaining quota spots
+        IF p_section = 1 THEN
+            SELECT invite_quota INTO v_target FROM public."voting-ops" WHERE id = 1;
+            SELECT COUNT(*) INTO v_approved_prev FROM public."voting-s1-r1" WHERE status = 'approved';
+        ELSIF p_section = 2 THEN
+            SELECT bid_quota INTO v_target FROM public."voting-ops" WHERE id = 1;
+            SELECT 
+                (SELECT COUNT(*) FROM public."voting-s2-r1" WHERE status = 'approved') +
+                (SELECT COUNT(*) FROM public."voting-s2-r2" WHERE status = 'approved')
+            INTO v_approved_prev;
+        END IF;
+
+        IF v_target IS NULL OR v_target <= 0 THEN
+            v_remaining_spots := 999;
+        ELSE
+            v_remaining_spots := GREATEST(0, v_target - COALESCE(v_approved_prev, 0));
+        END IF;
+
+        -- Step 1: Default all candidates to denied
+        EXECUTE format('
+            UPDATE public.%I
+            SET status = ''denied'',
+                updated_at = now()
+            WHERE id IS NOT NULL',
+            v_table
+        );
+
+        -- Step 2: Rank eligible candidates meeting the minimum Y/N cutoff and approve top spots
+        EXECUTE format('
+            WITH ranked_candidates AS (
+                SELECT id,
+                       ROW_NUMBER() OVER (
+                           ORDER BY ((COALESCE(positive, 0) * 100.0) / NULLIF(COALESCE(positive, 0) + COALESCE(negative, 0), 0)) DESC,
+                                    COALESCE(positive, 0) DESC,
+                                    id ASC
+                       ) as rank
+                FROM public.%I
+                WHERE (COALESCE(positive, 0) + COALESCE(negative, 0)) > 0
+                  AND (%s < 0 OR ((COALESCE(positive, 0) * 100.0) / NULLIF(COALESCE(positive, 0) + COALESCE(negative, 0), 0)) >= %s)
+            )
+            UPDATE public.%I t
+            SET status = CASE 
+                WHEN r.rank <= %s THEN ''approved''
+                ELSE ''denied''
+            END,
+            updated_at = now()
+            FROM ranked_candidates r
+            WHERE t.id = r.id',
+            v_table,
+            v_deny_yn,
+            v_deny_yn,
+            v_table,
+            v_remaining_spots
+        );
+
+    ELSE
+        -- Standard percentage threshold evaluation with safe WHERE clause
+        EXECUTE format('
+            UPDATE public.%I
+            SET status = CASE
+                WHEN (COALESCE(positive, 0) + COALESCE(negative, 0) + COALESCE(abstain, 0)) = 0 THEN ''in_contest''
+                WHEN (COALESCE(positive, 0) + COALESCE(negative, 0)) = 0 THEN ''in_contest''
+                WHEN (%s >= 0 AND ((COALESCE(positive, 0) * 100.0) / NULLIF(COALESCE(positive, 0) + COALESCE(negative, 0), 0)) < %s) THEN ''denied''
+                WHEN (%s >= 0 AND ((COALESCE(positive, 0) * 100.0) / NULLIF(COALESCE(positive, 0) + COALESCE(negative, 0), 0)) > %s)
+                     AND (%s < 0 OR ((COALESCE(abstain, 0) * 100.0) / NULLIF(COALESCE(positive, 0) + COALESCE(negative, 0) + COALESCE(abstain, 0), 0)) < %s) THEN ''approved''
+                ELSE ''in_contest''
+            END,
+            updated_at = now()
+            WHERE id IS NOT NULL',
+            v_table,
+            v_deny_yn, v_deny_yn,
+            v_approve_yn, v_approve_yn,
+            v_approve_at, v_approve_at
+        );
+    END IF;
+END;
+$$;
+
+-- 8. Stored Procedure: initialize_round_data (Auto-evaluates previous rounds)
 CREATE OR REPLACE FUNCTION public.initialize_round_data(p_section integer, p_round integer)
 RETURNS void
 LANGUAGE plpgsql
@@ -170,6 +321,9 @@ BEGIN
             ON CONFLICT (id) DO NOTHING;
 
         ELSIF p_round = 2 THEN
+            -- Auto-evaluate Section 1 Round 1 first so statuses are accurate
+            PERFORM public.evaluate_round_thresholds(1, 1);
+
             INSERT INTO public."voting-s1-r2" (id, positive, negative, abstain, status)
             SELECT id, 0, 0, 0, 'in_contest'
             FROM public."voting-s1-r1"
@@ -180,6 +334,9 @@ BEGIN
     ELSIF p_section = 2 THEN
         IF p_round = 1 THEN
             -- Section 2 Round 1: strictly approved candidates from Section 1 (R1 or R2)
+            PERFORM public.evaluate_round_thresholds(1, 1);
+            PERFORM public.evaluate_round_thresholds(1, 2);
+
             INSERT INTO public."voting-s2-r1" (id, positive, negative, abstain, status)
             SELECT id, 0, 0, 0, 'in_contest'
             FROM (
@@ -190,6 +347,8 @@ BEGIN
             ON CONFLICT (id) DO NOTHING;
 
         ELSIF p_round = 2 THEN
+            PERFORM public.evaluate_round_thresholds(2, 1);
+
             INSERT INTO public."voting-s2-r2" (id, positive, negative, abstain, status)
             SELECT id, 0, 0, 0, 'in_contest'
             FROM public."voting-s2-r1"
@@ -197,6 +356,8 @@ BEGIN
             ON CONFLICT (id) DO NOTHING;
 
         ELSIF p_round = 3 THEN
+            PERFORM public.evaluate_round_thresholds(2, 2);
+
             INSERT INTO public."voting-s2-r3" (id, positive, negative, abstain, status)
             SELECT id, 0, 0, 0, 'in_contest'
             FROM public."voting-s2-r2"
@@ -207,7 +368,7 @@ BEGIN
 END;
 $$;
 
--- 7. Stored Procedure: setup_section
+-- 9. Stored Procedure: setup_section
 CREATE OR REPLACE FUNCTION public.setup_section(p_section integer, p_quota integer)
 RETURNS void
 LANGUAGE plpgsql
@@ -256,7 +417,6 @@ BEGIN
 END;
 $$;
 
--- Alias setup_voting_section for backward compatibility
 CREATE OR REPLACE FUNCTION public.setup_voting_section(p_section integer, p_target_count integer)
 RETURNS void
 LANGUAGE plpgsql
@@ -267,7 +427,7 @@ BEGIN
 END;
 $$;
 
--- 8. Stored Procedure: switch_round
+-- 10. Stored Procedure: switch_round
 CREATE OR REPLACE FUNCTION public.switch_round(p_section integer, p_round integer)
 RETURNS void
 LANGUAGE plpgsql
@@ -289,7 +449,7 @@ BEGIN
 END;
 $$;
 
--- 9. Stored Procedure: start_round
+-- 11. Stored Procedure: start_round
 CREATE OR REPLACE FUNCTION public.start_round(p_section integer, p_round integer)
 RETURNS void
 LANGUAGE plpgsql
@@ -299,14 +459,11 @@ DECLARE
     v_pnm_order text[];
     v_first_pnm text;
     v_table text;
-    v_is_grid boolean;
 BEGIN
     PERFORM public.initialize_round_data(p_section, p_round);
 
     v_table := 'voting-s' || p_section || '-r' || p_round;
-    v_is_grid := (p_section = 1 AND p_round = 1);
 
-    -- Determine random order once for in-contest candidates
     EXECUTE format('
         SELECT array_agg(id ORDER BY random())
         FROM public.%I
@@ -320,60 +477,20 @@ BEGIN
         v_first_pnm := NULL;
     END IF;
 
-    IF v_is_grid THEN
-        -- Section 1 Round 1 Grid Mode: voting is immediately open for all PNMs
-        UPDATE public."voting-ops"
-        SET section = p_section,
-            round = p_round,
-            round_status = 'in_progress',
-            voting_status = 'open',
-            pnm_order = v_pnm_order,
-            active_pnm_id = NULL,
-            closing_ends_at = NULL,
-            updated_at = now()
-        WHERE id = 1;
-    ELSE
-        -- Presentation Mode: round is active, candidate selected, voting closed until opened
-        UPDATE public."voting-ops"
-        SET section = p_section,
-            round = p_round,
-            round_status = 'in_progress',
-            voting_status = 'closed',
-            pnm_order = v_pnm_order,
-            active_pnm_id = v_first_pnm,
-            closing_ends_at = NULL,
-            updated_at = now()
-        WHERE id = 1;
-    END IF;
-END;
-$$;
-
--- 10. Stored Procedures: Candidate-Level Voting Controls
-CREATE OR REPLACE FUNCTION public.open_candidate_voting(p_student_id text DEFAULT NULL)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-BEGIN
     UPDATE public."voting-ops"
-    SET voting_status = 'open',
+    SET section = p_section,
+        round = p_round,
+        round_status = 'in_progress',
+        voting_status = 'open',
+        pnm_order = v_pnm_order,
+        active_pnm_id = v_first_pnm,
         closing_ends_at = NULL,
-        active_pnm_id = COALESCE(p_student_id, active_pnm_id),
         updated_at = now()
     WHERE id = 1;
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.open_pnm_voting(p_student_id text DEFAULT NULL)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-BEGIN
-    PERFORM public.open_candidate_voting(p_student_id);
-END;
-$$;
-
+-- 12. Stored Procedures: Round-Level Countdown & Close Controls
 CREATE OR REPLACE FUNCTION public.start_voting_countdown()
 RETURNS void
 LANGUAGE plpgsql
@@ -399,42 +516,21 @@ DECLARE
 BEGIN
     SELECT section, round INTO v_sec, v_rnd FROM public."voting-ops" WHERE id = 1;
 
-    IF v_sec = 1 AND v_rnd = 1 THEN
-        -- Closing Section 1 Round 1 also evaluates thresholds
-        BEGIN
-            PERFORM public.evaluate_round_thresholds(1, 1);
-        EXCEPTION WHEN others THEN
-            RAISE WARNING 'evaluate_round_thresholds error: %', SQLERRM;
-        END;
+    BEGIN
+        PERFORM public.evaluate_round_thresholds(v_sec, v_rnd);
+    EXCEPTION WHEN others THEN
+        RAISE WARNING 'evaluate_round_thresholds error: %', SQLERRM;
+    END;
 
-        UPDATE public."voting-ops"
-        SET round_status = 'completed',
-            voting_status = 'closed',
-            closing_ends_at = NULL,
-            updated_at = now()
-        WHERE id = 1;
-    ELSE
-        -- In presentation mode, only close voting for that candidate (round stays in_progress)
-        UPDATE public."voting-ops"
-        SET voting_status = 'closed',
-            closing_ends_at = NULL,
-            updated_at = now()
-        WHERE id = 1;
-    END IF;
+    UPDATE public."voting-ops"
+    SET round_status = 'completed',
+        voting_status = 'closed',
+        closing_ends_at = NULL,
+        updated_at = now()
+    WHERE id = 1;
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.close_pnm_voting()
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-BEGIN
-    PERFORM public.close_voting();
-END;
-$$;
-
--- 11. Stored Procedure: end_round
 CREATE OR REPLACE FUNCTION public.end_round(p_section integer, p_round integer)
 RETURNS void
 LANGUAGE plpgsql
@@ -456,7 +552,7 @@ BEGIN
 END;
 $$;
 
--- 12. Candidate Selection & App Committee
+-- 13. Candidate Selection & App Committee
 CREATE OR REPLACE FUNCTION public.select_candidate(p_student_id text)
 RETURNS void
 LANGUAGE plpgsql
@@ -484,154 +580,6 @@ BEGIN
 END;
 $$;
 
--- 13. Stored Procedure: evaluate_round_thresholds
-CREATE OR REPLACE FUNCTION public.evaluate_round_thresholds(p_section integer, p_round integer)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-AS $$
-DECLARE
-    v_table text;
-    v_target integer;
-    v_approved_prev integer;
-    v_remaining_spots integer;
-BEGIN
-    v_table := 'voting-s' || p_section || '-r' || p_round;
-
-    IF p_section = 1 THEN
-        -- Section 1: Invite Voting
-        IF p_round = 1 THEN
-            EXECUTE format('
-                UPDATE public.%I
-                SET status = CASE
-                    WHEN (positive + negative + abstain) = 0 THEN ''in_contest''
-                    WHEN (positive + negative) = 0 THEN ''in_contest''
-                    WHEN ((positive * 100.0) / (positive + negative)) < 60.0 THEN ''denied''
-                    WHEN ((positive * 100.0) / (positive + negative)) > 85.0 
-                         AND ((abstain * 100.0) / (positive + negative + abstain)) < 50.0 THEN ''approved''
-                    ELSE ''in_contest''
-                END,
-                updated_at = now()',
-                v_table
-            );
-
-        ELSIF p_round = 2 THEN
-            SELECT invite_quota INTO v_target FROM public."voting-ops" WHERE id = 1;
-            SELECT COUNT(*) INTO v_approved_prev FROM public."voting-s1-r1" WHERE status = 'approved';
-            v_remaining_spots := GREATEST(0, COALESCE(v_target, 999) - v_approved_prev);
-
-            -- 1. Mark < 65% as denied
-            EXECUTE format('
-                UPDATE public.%I
-                SET status = ''denied'',
-                    updated_at = now()
-                WHERE (positive + negative) = 0 
-                   OR ((positive * 100.0) / (positive + negative)) < 65.0',
-                v_table
-            );
-
-            -- 2. Fill top remaining spots for candidates with Y/N >= 65%
-            EXECUTE format('
-                WITH ranked_pnms AS (
-                    SELECT id,
-                           ROW_NUMBER() OVER (
-                               ORDER BY ((positive * 100.0) / NULLIF(positive + negative, 0)) DESC,
-                                        positive DESC,
-                                        id ASC
-                           ) as rank
-                    FROM public.%I
-                    WHERE (positive + negative) > 0 
-                      AND ((positive * 100.0) / (positive + negative)) >= 65.0
-                )
-                UPDATE public.%I t
-                SET status = CASE 
-                    WHEN r.rank <= %s THEN ''approved''
-                    ELSE ''denied''
-                END,
-                updated_at = now()
-                FROM ranked_pnms r
-                WHERE t.id = r.id',
-                v_table, v_table, v_remaining_spots
-            );
-        END IF;
-
-    ELSIF p_section = 2 THEN
-        -- Section 2: Bid Voting
-        IF p_round = 1 THEN
-            EXECUTE format('
-                UPDATE public.%I
-                SET status = CASE
-                    WHEN (positive + negative + abstain) = 0 THEN ''in_contest''
-                    WHEN (positive + negative) = 0 THEN ''in_contest''
-                    WHEN ((positive * 100.0) / (positive + negative)) < 60.0 THEN ''denied''
-                    WHEN ((positive * 100.0) / (positive + negative)) > 85.0 
-                         AND ((abstain * 100.0) / (positive + negative + abstain)) < 50.0 THEN ''approved''
-                    ELSE ''in_contest''
-                END,
-                updated_at = now()',
-                v_table
-            );
-
-        ELSIF p_round = 2 THEN
-            EXECUTE format('
-                UPDATE public.%I
-                SET status = CASE
-                    WHEN (positive + negative) = 0 THEN ''in_contest''
-                    WHEN ((positive * 100.0) / (positive + negative)) < 65.0 THEN ''denied''
-                    WHEN ((positive * 100.0) / (positive + negative)) > 80.0 THEN ''approved''
-                    ELSE ''in_contest''
-                END,
-                updated_at = now()',
-                v_table
-            );
-
-        ELSIF p_round = 3 THEN
-            SELECT bid_quota INTO v_target FROM public."voting-ops" WHERE id = 1;
-            SELECT 
-                (SELECT COUNT(*) FROM public."voting-s2-r1" WHERE status = 'approved') +
-                (SELECT COUNT(*) FROM public."voting-s2-r2" WHERE status = 'approved')
-            INTO v_approved_prev;
-
-            v_remaining_spots := GREATEST(0, COALESCE(v_target, 999) - v_approved_prev);
-
-            -- 1. Mark < 75% as denied
-            EXECUTE format('
-                UPDATE public.%I
-                SET status = ''denied'',
-                    updated_at = now()
-                WHERE (positive + negative) = 0 
-                   OR ((positive * 100.0) / (positive + negative)) < 75.0',
-                v_table
-            );
-
-            -- 2. Fill top remaining spots for candidates with Y/N >= 75%
-            EXECUTE format('
-                WITH ranked_pnms AS (
-                    SELECT id,
-                           ROW_NUMBER() OVER (
-                               ORDER BY ((positive * 100.0) / NULLIF(positive + negative, 0)) DESC,
-                                        positive DESC,
-                                        id ASC
-                           ) as rank
-                    FROM public.%I
-                    WHERE (positive + negative) > 0 
-                      AND ((positive * 100.0) / (positive + negative)) >= 75.0
-                )
-                UPDATE public.%I t
-                SET status = CASE 
-                    WHEN r.rank <= %s THEN ''approved''
-                    ELSE ''denied''
-                END,
-                updated_at = now()
-                FROM ranked_pnms r
-                WHERE t.id = r.id',
-                v_table, v_table, v_remaining_spots
-            );
-        END IF;
-    END IF;
-END;
-$$;
-
 -- 14. Stored Procedure: cast_vote
 CREATE OR REPLACE FUNCTION public.cast_vote(
     p_student_id text,
@@ -650,7 +598,6 @@ DECLARE
     v_neg integer;
     v_abs integer;
 BEGIN
-    -- 1. Upsert or delete member vote
     IF p_vote_choice IS NULL THEN
         DELETE FROM public.member_votes
         WHERE user_id = p_user_id
@@ -664,7 +611,6 @@ BEGIN
         DO UPDATE SET vote_choice = EXCLUDED.vote_choice, updated_at = now();
     END IF;
 
-    -- 2. Calculate new tallies for this candidate in the round
     SELECT 
         COUNT(*) FILTER (WHERE vote_choice = 'yes'),
         COUNT(*) FILTER (WHERE vote_choice = 'no'),
@@ -675,7 +621,6 @@ BEGIN
       AND section_num = p_section_num
       AND round_num = p_round_num;
 
-    -- 3. Upsert round tally table
     v_table := 'voting-s' || p_section_num || '-r' || p_round_num;
 
     EXECUTE format('
@@ -698,11 +643,8 @@ GRANT EXECUTE ON FUNCTION public.setup_voting_section(integer, integer) TO authe
 GRANT EXECUTE ON FUNCTION public.switch_round(integer, integer) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.start_round(integer, integer) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.end_round(integer, integer) TO authenticated, anon, service_role;
-GRANT EXECUTE ON FUNCTION public.open_candidate_voting(text) TO authenticated, anon, service_role;
-GRANT EXECUTE ON FUNCTION public.open_pnm_voting(text) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.start_voting_countdown() TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.close_voting() TO authenticated, anon, service_role;
-GRANT EXECUTE ON FUNCTION public.close_pnm_voting() TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.select_candidate(text) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.toggle_app_committee() TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.evaluate_round_thresholds(integer, integer) TO authenticated, anon, service_role;
@@ -713,6 +655,10 @@ DO $$
 BEGIN
     BEGIN
         ALTER PUBLICATION supabase_realtime ADD TABLE public."voting-ops";
+    EXCEPTION WHEN duplicate_object THEN NULL; WHEN others THEN NULL;
+    END;
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public."voting-thresholds";
     EXCEPTION WHEN duplicate_object THEN NULL; WHEN others THEN NULL;
     END;
     BEGIN
@@ -740,3 +686,117 @@ BEGIN
     EXCEPTION WHEN duplicate_object THEN NULL; WHEN others THEN NULL;
     END;
 END $$;
+
+-- ==============================================================================
+-- 16. PNM Review Splits (Split Search for Rush Committee)
+-- ==============================================================================
+
+-- Add review_code column to pnms table
+ALTER TABLE public.pnms ADD COLUMN IF NOT EXISTS review_code text;
+
+-- Create review splits tracking table
+CREATE TABLE IF NOT EXISTS public.pnm_review_splits (
+    id bigserial PRIMARY KEY,
+    code text NOT NULL,
+    student_id text NOT NULL,
+    reviewer_index integer NOT NULL,
+    total_reviewers integer NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pnm_review_splits_code ON public.pnm_review_splits(code);
+ALTER TABLE public.pnm_review_splits ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+    DROP POLICY IF EXISTS "Allow all for authenticated users" ON public.pnm_review_splits;
+    CREATE POLICY "Allow all for authenticated users" ON public.pnm_review_splits FOR ALL TO authenticated USING (true) WITH CHECK (true);
+    DROP POLICY IF EXISTS "Allow select for public" ON public.pnm_review_splits;
+    CREATE POLICY "Allow select for public" ON public.pnm_review_splits FOR SELECT TO public USING (true);
+END $$;
+
+GRANT ALL ON TABLE public.pnm_review_splits TO authenticated, anon, service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated, anon, service_role;
+
+-- Stored Procedure: split_pnm_reviews
+CREATE OR REPLACE FUNCTION public.split_pnm_reviews(p_num_reviewers integer)
+RETURNS TABLE (
+    reviewer_index integer,
+    code text,
+    pnm_count integer,
+    student_ids text[]
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_total integer;
+    v_base integer;
+    v_rem integer;
+    v_shuffled_ids text[];
+    v_idx integer := 1;
+    v_start integer := 1;
+    v_len integer;
+    v_code text;
+    v_slice text[];
+BEGIN
+    IF p_num_reviewers <= 0 THEN
+        RAISE EXCEPTION 'Number of reviewers must be greater than 0';
+    END IF;
+
+    -- Fetch all PNM IDs in random order
+    SELECT array_agg(student_id ORDER BY random())
+    INTO v_shuffled_ids
+    FROM public.pnms;
+
+    v_total := COALESCE(array_length(v_shuffled_ids, 1), 0);
+    IF v_total = 0 THEN
+        RETURN;
+    END IF;
+
+    v_base := v_total / p_num_reviewers;
+    v_rem := v_total % p_num_reviewers;
+
+    -- Clear old review codes from pnms and table
+    UPDATE public.pnms SET review_code = NULL;
+    DELETE FROM public.pnm_review_splits;
+
+    FOR v_idx IN 1..p_num_reviewers LOOP
+        v_len := v_base + (CASE WHEN v_idx <= v_rem THEN 1 ELSE 0 END);
+        IF v_len <= 0 THEN
+            CONTINUE;
+        END IF;
+
+        -- Generate 6-char random hex code
+        v_code := upper(substring(md5(random()::text || clock_timestamp()::text) from 1 for 6));
+        v_slice := v_shuffled_ids[v_start : (v_start + v_len - 1)];
+        v_start := v_start + v_len;
+
+        -- Update pnms
+        UPDATE public.pnms
+        SET review_code = v_code
+        WHERE student_id = ANY(v_slice);
+
+        -- Insert into pnm_review_splits
+        INSERT INTO public.pnm_review_splits (code, student_id, reviewer_index, total_reviewers)
+        SELECT v_code, unnest(v_slice), v_idx, p_num_reviewers;
+
+        reviewer_index := v_idx;
+        code := v_code;
+        pnm_count := v_len;
+        student_ids := v_slice;
+        RETURN NEXT;
+    END LOOP;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.split_pnm_reviews(integer) TO authenticated, anon, service_role;
+
+DO $$
+BEGIN
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE public.pnm_review_splits;
+    EXCEPTION WHEN duplicate_object THEN NULL; WHEN others THEN NULL;
+    END;
+END $$;
+

@@ -78,11 +78,7 @@ export default function VoteDashboard() {
   const [showApprovedDeniedModal, setShowApprovedDeniedModal] = useState(false);
   const [showInvitesBidsModal, setShowInvitesBidsModal] = useState(false);
 
-  // Presentation Mode Vote States
-  const [isChangingVote, setIsChangingVote] = useState(false);
-  const [isVoteRevealed, setIsVoteRevealed] = useState(false);
-
-  // Details Modal States (for Grid Mode)
+  // Details Modal States
   const [selectedPnmForDetails, setSelectedPnmForDetails] = useState<PNM | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editedValues, setEditedValues] = useState<Partial<PNM>>({});
@@ -105,6 +101,20 @@ export default function VoteDashboard() {
   >({});
   const [allCandidateStatuses, setAllCandidateStatuses] = useState<Record<string, CandidateStatus>>({});
 
+  // Dynamic Voting Thresholds
+  const [thresholdsMap, setThresholdsMap] = useState<
+    Record<
+      string,
+      {
+        min_yn_deny: number;
+        min_yn_approve: number;
+        max_at_approve: number;
+        fill_quota_spots: boolean;
+        description: string;
+      }
+    >
+  >({});
+
   // Derived Helpers
   const isPresentationRound = (votingSection === 1 && votingRound === 2) || votingSection === 2;
   const isAbstainAvailable = (votingSection === 1 && votingRound === 1) || (votingSection === 2 && votingRound === 1);
@@ -118,8 +128,45 @@ export default function VoteDashboard() {
   const inviteTargetCount = inviteQuota;
   const bidTargetCount = bidQuota;
 
+  const isStrictRegent =
+    userRole.toLowerCase() === "regent" ||
+    userRole.toLowerCase() === "vice regent" ||
+    userRole.toLowerCase() === "vr" ||
+    userRole.toLowerCase() === "admin";
+
+  const currentThresholdDescription =
+    thresholdsMap[`s${votingSection}-r${votingRound}`]?.description ||
+    (votingSection === 1 && votingRound === 1
+      ? "Denied: Y/N < 60% | Approved: Y/N > 85% & A/T < 50% | In Contest: 60% <= Y/N <= 85% or (A/T >= 50% & Y/N > 85%)"
+      : votingSection === 1 && votingRound === 2
+      ? "Denied: Y/N < 65% | Approved: Fill remaining invite quota spots with top Y/N% (>= 65%)"
+      : votingSection === 2 && votingRound === 1
+      ? "Denied: Y/N < 60% | Approved: Y/N > 85% & A/T < 50% | In Contest: 60% <= Y/N <= 85% or (A/T >= 50% & Y/N > 85%)"
+      : votingSection === 2 && votingRound === 2
+      ? "Denied: Y/N < 65% | Approved: Y/N > 80% | In Contest: 65% <= Y/N <= 80%"
+      : "Denied: Y/N < 75% | Approved: Fill remaining bid quota spots with top Y/N% (>= 75%)");
+
   // Current round table name
   const currentTableName = `voting-s${votingSection}-r${votingRound}`;
+
+  // Fetch dynamic voting thresholds
+  useEffect(() => {
+    async function fetchThresholds() {
+      try {
+        const { data } = await supabase.from("voting-thresholds").select("*");
+        if (data) {
+          const map: any = {};
+          data.forEach((t) => {
+            map[t.id] = t;
+          });
+          setThresholdsMap(map);
+        }
+      } catch (err) {
+        console.error("Error loading voting thresholds:", err);
+      }
+    }
+    fetchThresholds();
+  }, []);
 
   // Verify auth session
   useEffect(() => {
@@ -400,17 +447,14 @@ export default function VoteDashboard() {
 
   // Filtered and Sorted PNMs list
   // Note: For presentation rounds (S1 R2, S2 R1, S2 R2, S2 R3), only candidates who are "in contest"
-  // appear in the active presentation pool. Those approved or denied are excluded.
+  // Filtered and Sorted PNMs list
+  // For any round after S1 R1, only candidates who advanced to this round appear for voting.
   const filteredPnms = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     let list = pnms;
 
-    // In presentation mode, only include candidates who exist in current round's table AND have status === "in_contest"
-    if (isPresentationRound) {
-      list = list.filter((p) => {
-        const candidateRecord = roundCounts[p.student_id];
-        return candidateRecord && candidateRecord.status === "in_contest";
-      });
+    if (votingSection > 1 || votingRound > 1) {
+      list = list.filter((p) => Boolean(roundCounts[p.student_id]));
     }
 
     if (query) {
@@ -440,22 +484,37 @@ export default function VoteDashboard() {
     }
 
     return [...list].sort((a, b) => a.full_name.localeCompare(b.full_name));
-  }, [pnms, searchQuery, pnmOrder, isPresentationRound, roundCounts]);
+  }, [pnms, searchQuery, pnmOrder, votingSection, votingRound, roundCounts]);
 
-  // Approved & Denied candidate lists for current round/section
+  // Approved & Denied & In Contest candidate lists for the CURRENT active round evaluation
   const approvedPnms = useMemo(() => {
     return pnms.filter((p) => {
-      const st = allCandidateStatuses[p.student_id] || roundCounts[p.student_id]?.status;
+      const st = roundCounts[p.student_id]?.status;
       return st === "approved";
     });
-  }, [pnms, roundCounts, allCandidateStatuses]);
+  }, [pnms, roundCounts]);
 
   const deniedPnms = useMemo(() => {
     return pnms.filter((p) => {
-      const st = allCandidateStatuses[p.student_id] || roundCounts[p.student_id]?.status;
+      const st = roundCounts[p.student_id]?.status;
       return st === "denied";
     });
-  }, [pnms, roundCounts, allCandidateStatuses]);
+  }, [pnms, roundCounts]);
+
+  const inContestPnms = useMemo(() => {
+    return pnms.filter((p) => {
+      const rec = roundCounts[p.student_id];
+      if (!rec) return false;
+      return rec.status === "in_contest" || (!rec.status && rec.status !== "approved" && rec.status !== "denied");
+    });
+  }, [pnms, roundCounts]);
+
+  // All Approved candidates across all evaluated rounds in the active section (for Invites/Bids modal)
+  const sectionApprovedPnms = useMemo(() => {
+    return pnms.filter((p) => {
+      return allCandidateStatuses[p.student_id] === "approved";
+    });
+  }, [pnms, allCandidateStatuses]);
 
   // Active PNM for Presentation Mode
   const activePnm = useMemo(() => {
@@ -473,12 +532,24 @@ export default function VoteDashboard() {
     return idx >= 0 ? idx : 0;
   }, [filteredPnms, activePnm]);
 
+  const activeUserVote = activePnm ? (votes[activePnm.student_id] || null) : null;
+  const activeCounts = activePnm ? roundCounts[activePnm.student_id] : null;
+  const activePosVotes = activeCounts?.positive ?? 0;
+  const activeAbstVotes = activeCounts?.abstain ?? 0;
+  const activeNegVotes = activeCounts?.negative ?? 0;
+  const activeTotalVotes = activePosVotes + (isAbstainAvailable ? activeAbstVotes : 0) + activeNegVotes;
+
+  const pnmsVotedOnCount = useMemo(() => {
+    return filteredPnms.filter((p) => {
+      const c = roundCounts[p.student_id];
+      return c && (c.positive + c.abstain + c.negative > 0);
+    }).length;
+  }, [filteredPnms, roundCounts]);
+
   // Fetch feedback when active PNM changes in presentation mode
   useEffect(() => {
     if (isPresentationRound && activePnm) {
       fetchFeedbackList(activePnm.student_id);
-      setIsChangingVote(false);
-      setIsVoteRevealed(false);
       setIsEditing(false);
       setEditedValues({ ...activePnm });
     }
@@ -501,27 +572,27 @@ export default function VoteDashboard() {
         setCountdownSeconds(0);
         setClosingEndsAt(null);
         setVotingStatus("closed"); // Optimistic immediate close!
+        setRoundStatus("completed");
 
         if (!isClosingRef.current) {
           isClosingRef.current = true;
           try {
-            const { error } = await supabase.rpc("close_voting");
+            const { error } = await supabase.rpc("end_round", {
+              p_section: votingSection,
+              p_round: votingRound,
+            });
             if (error) {
-              console.error("Error in close_voting RPC:", error);
+              console.error("Error in end_round RPC:", error);
               // Direct fallback update
               await supabase
                 .from("voting-ops")
-                .update({ voting_status: "closed", closing_ends_at: null })
+                .update({ round_status: "completed", voting_status: "closed", closing_ends_at: null })
                 .eq("id", 1);
             }
-            toast.info(
-              isPresentationRound
-                ? "Voting is now closed for this candidate."
-                : "Voting is now closed for this round."
-            );
+            toast.info("Voting closed and round thresholds evaluated.");
             fetchRoundCounts();
           } catch (err) {
-            console.error("Error closing voting:", err);
+            console.error("Error ending round:", err);
           }
         }
       } else {
@@ -547,6 +618,12 @@ export default function VoteDashboard() {
   // Regent Controls: Switch Round
   const handleSelectSectionRound = async (section: number, round: number) => {
     try {
+      // Auto-evaluate current/previous round so status is evaluated before moving
+      await supabase.rpc("evaluate_round_thresholds", {
+        p_section: votingSection,
+        p_round: votingRound,
+      });
+
       const { error } = await supabase.rpc("switch_round", {
         p_section: section,
         p_round: round,
@@ -555,11 +632,11 @@ export default function VoteDashboard() {
       if (error) throw error;
       setSelectedRegentSection(section);
       setSelectedRegentRound(round);
-      toast.success(`Switched to Section ${section === 1 ? "Invite" : "Bid"} - Round ${round} (Voting closed)`);
-      fetchRoundCounts();
-    } catch (err) {
+      toast.success(`Switched to Section ${section === 1 ? "Invite" : "Bid"} - Round ${round}`);
+      await fetchRoundCounts();
+    } catch (err: any) {
       console.error("Error setting section/round:", err);
-      toast.error("Failed to update round.");
+      toast.error(err?.message || "Failed to update round.");
     }
   };
 
@@ -581,19 +658,24 @@ export default function VoteDashboard() {
     }
   };
 
-  // Regent Controls: End Round (Presentation / Grid)
-  const handleEndRound = async () => {
+  // Regent Controls: Evaluate Candidate Thresholds (Live in current moment)
+  const handleEvaluateRound = async () => {
     try {
-      const { error } = await supabase.rpc("end_round", {
+      const { error } = await supabase.rpc("evaluate_round_thresholds", {
         p_section: votingSection,
         p_round: votingRound,
       });
-      if (error) throw error;
-      toast.success("Round ended and candidate thresholds evaluated.");
-      fetchRoundCounts();
-    } catch (err) {
-      console.error("Error ending round:", err);
-      toast.error("Failed to end round.");
+      if (error) {
+        console.error("Error evaluating round thresholds (RPC):", error.message, error.details, error.hint);
+        throw error;
+      }
+      toast.success(
+        `Thresholds evaluated for Section ${votingSection === 1 ? "Invite" : "Bid"} Round ${votingRound}!`
+      );
+      await fetchRoundCounts();
+    } catch (err: any) {
+      console.error("Error evaluating round thresholds:", err?.message || err);
+      toast.error(err?.message || "Failed to evaluate round thresholds. Please run migration script.");
     }
   };
 
@@ -627,29 +709,8 @@ export default function VoteDashboard() {
     }
   };
 
-  // Presentation Mode: Open voting for current PNM
-  const handleOpenVoting = async () => {
-    try {
-      const { error } = await supabase.rpc("open_candidate_voting", {
-        p_student_id: activePnm?.student_id || null,
-      });
-
-      if (error) throw error;
-      toast.success(`Voting is now OPEN for ${activePnm?.full_name || "candidate"}!`);
-      fetchRoundCounts();
-    } catch (err) {
-      console.error("Error opening voting:", err);
-      toast.error("Failed to open voting.");
-    }
-  };
-
   // Presentation Mode: Change Active PNM
   const handleSelectPresentationPnm = async (studentId: string) => {
-    if (votingStatus === "open" || votingStatus === "closing" || (countdownSeconds !== null && countdownSeconds > 0)) {
-      toast.warning("Voting is currently open or closing. Close voting before changing candidates.");
-      return;
-    }
-
     try {
       setActivePnmId(studentId);
       const { error } = await supabase.rpc("select_candidate", {
@@ -664,7 +725,6 @@ export default function VoteDashboard() {
   };
 
   const handleNextPnm = async () => {
-    if (votingStatus === "open" || votingStatus === "closing" || (countdownSeconds !== null && countdownSeconds > 0)) return;
     if (activeIndex < filteredPnms.length - 1) {
       const nextCandidate = filteredPnms[activeIndex + 1];
       await handleSelectPresentationPnm(nextCandidate.student_id);
@@ -672,7 +732,6 @@ export default function VoteDashboard() {
   };
 
   const handlePrevPnm = async () => {
-    if (votingStatus === "open" || votingStatus === "closing" || (countdownSeconds !== null && countdownSeconds > 0)) return;
     if (activeIndex > 0) {
       const prevCandidate = filteredPnms[activeIndex - 1];
       await handleSelectPresentationPnm(prevCandidate.student_id);
@@ -777,13 +836,8 @@ export default function VoteDashboard() {
         return;
       }
 
-      if (isPresentationRound && ops?.active_pnm_id && ops.active_pnm_id !== studentId) {
-        toast.error("Voting is only open for the actively presented candidate.");
-        return;
-      }
-
       const currentVote = votes[studentId] || null;
-      const targetVote = currentVote === type && !isPresentationRound ? null : type;
+      const targetVote = currentVote === type ? null : type;
 
       const { error } = await supabase.rpc("cast_vote", {
         p_student_id: String(studentId),
@@ -802,11 +856,6 @@ export default function VoteDashboard() {
       setVotes(updatedVotes);
 
       fetchRoundCounts();
-
-      if (isPresentationRound) {
-        setIsChangingVote(false);
-        setIsVoteRevealed(false);
-      }
 
       if (targetVote === null) {
         toast.info("Vote cleared");
@@ -955,22 +1004,6 @@ export default function VoteDashboard() {
   const isRushCommitteeOnly = userRole.toLowerCase() === "rush committee" && !isRushChair;
   const canEdit = isRushChair || (userRole.toLowerCase() === "rush committee" && appComLive);
 
-  // Counters for active PNM in presentation mode
-  const activePnmCounts = activePnm ? roundCounts[activePnm.student_id] : null;
-  const activePosVotes = activePnmCounts?.positive ?? 0;
-  const activeAbstVotes = activePnmCounts?.abstain ?? 0;
-  const activeNegVotes = activePnmCounts?.negative ?? 0;
-  const activeTotalVotes = activePosVotes + activeAbstVotes + activeNegVotes;
-  const activeUserVote = activePnm ? votes[activePnm.student_id] || null : null;
-
-  // Total PNMs voted on in the active round
-  const pnmsVotedOnCount = useMemo(() => {
-    return filteredPnms.filter((p) => {
-      const c = roundCounts[p.student_id];
-      return c && c.positive + c.abstain + c.negative > 0;
-    }).length;
-  }, [filteredPnms, roundCounts]);
-
   if (checkingAuth) {
     return (
       <div className="flex min-h-screen items-center justify-center font-sans">
@@ -980,7 +1013,7 @@ export default function VoteDashboard() {
   }
 
   return (
-    <div className={`min-h-screen bg-transparent font-sans p-6 text-gray-900 ${isPresentationRound ? "pb-32" : ""}`}>
+    <div className="min-h-screen bg-transparent font-sans p-6 text-gray-900">
       {/* 5-Second Countdown Notification Banner */}
       {countdownSeconds !== null && countdownSeconds >= 0 && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-11/12 max-w-xl animate-bounce">
@@ -1180,46 +1213,52 @@ export default function VoteDashboard() {
                 </span>
               </div>
 
-              {/* Start Round / End Round in Presentation Mode vs Go Live in Grid Mode */}
+              {/* Start Round / Evaluate / Countdown Controls (All Rounds) */}
               <div>
-                {isPresentationRound ? (
-                  !roundActive ? (
+                {!roundActive ? (
+                  <div className="flex gap-2">
                     <button
                       onClick={handleStartRound}
-                      className="w-full py-2 px-3 rounded-lg text-xs font-bold text-white bg-green-700 hover:bg-green-800 transition-all shadow-sm flex items-center justify-center gap-2"
+                      className="flex-1 py-2 px-3 rounded-lg text-xs font-bold text-white bg-green-700 hover:bg-green-800 transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
                       Start Round (S{selectedRegentSection} R{selectedRegentRound})
                     </button>
-                  ) : (
                     <button
-                      onClick={handleEndRound}
-                      className="w-full py-2 px-3 rounded-lg text-xs font-bold text-white bg-red-700 hover:bg-red-800 transition-all shadow-sm flex items-center justify-center gap-2"
+                      onClick={handleEvaluateRound}
+                      className="py-2 px-3 rounded-lg text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                      title="Evaluate thresholds in the current moment"
                     >
-                      End Round (S{selectedRegentSection} R{selectedRegentRound})
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Evaluate
                     </button>
-                  )
-                ) : (
-                  /* Grid Mode: Section 1 Round 1 */
-                  !isLive ? (
-                    <button
-                      onClick={handleGoLive}
-                      className="w-full py-2 px-3 rounded-lg text-xs font-bold text-white bg-green-700 hover:bg-green-800 transition-all shadow-sm flex items-center justify-center gap-2"
-                    >
-                      <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                      Go Live (S1 R1)
-                    </button>
-                  ) : countdownSeconds !== null && countdownSeconds > 0 ? (
+                  </div>
+                ) : countdownSeconds !== null && countdownSeconds > 0 ? (
+                  <div className="flex gap-2">
                     <button
                       disabled
-                      className="w-full py-2 px-3 rounded-lg text-xs font-bold text-white bg-amber-600 opacity-90 cursor-not-allowed flex items-center justify-center gap-2 animate-pulse"
+                      className="flex-1 py-2 px-3 rounded-lg text-xs font-bold text-white bg-amber-600 opacity-90 cursor-not-allowed flex items-center justify-center gap-2 animate-pulse"
                     >
                       Closing in {countdownSeconds}s...
                     </button>
-                  ) : (
+                    <button
+                      onClick={handleEvaluateRound}
+                      className="py-2 px-3 rounded-lg text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                      title="Evaluate thresholds in the current moment"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Evaluate
+                    </button>
+                  </div>
+                ) : isLive ? (
+                  <div className="flex gap-2">
                     <button
                       onClick={handleInitiateClosingCountdown}
-                      className="w-full py-2 px-3 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 transition-all shadow-sm flex items-center justify-center gap-2"
+                      className="flex-1 py-2 px-2.5 rounded-lg text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
                       title="Starts 5-second countdown to close voting"
                     >
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
@@ -1228,7 +1267,37 @@ export default function VoteDashboard() {
                       </svg>
                       Close (5s Timer)
                     </button>
-                  )
+                    <button
+                      onClick={handleEvaluateRound}
+                      className="py-2 px-3 rounded-lg text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                      title="Evaluate thresholds in the current moment"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Evaluate
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleStartRound}
+                      className="flex-1 py-2 px-2.5 rounded-lg text-xs font-bold text-white bg-green-700 hover:bg-green-800 transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                      title={`Start Section ${selectedRegentSection} Round ${selectedRegentRound}`}
+                    >
+                      Start Round (S{selectedRegentSection} R{selectedRegentRound})
+                    </button>
+                    <button
+                      onClick={handleEvaluateRound}
+                      className="py-2 px-3 rounded-lg text-xs font-bold text-white bg-blue-700 hover:bg-blue-800 transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+                      title="Evaluate thresholds in the current moment"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Evaluate
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
@@ -1304,34 +1373,34 @@ export default function VoteDashboard() {
           <span className="font-bold underline decoration-zinc-400 capitalize">{userRole}</span>.
         </div>
 
-        {/* Middle: Show Invites / Show Bids Button for Regent / Vice Regent / Rush Chairs */}
-        {isRushChair && (
-          <div className="flex items-center">
+        {/* Middle: Show Approved/Denied Pop-up Button (Only for Regent and Vice Regent) */}
+        {isStrictRegent ? (
+          <div className="flex items-center gap-3">
             <button
-              onClick={() => setShowInvitesBidsModal(true)}
-              className="bg-red-700 hover:bg-red-800 text-white font-bold text-xs uppercase px-4 py-2 rounded-lg shadow-sm transition-all hover:scale-105 flex items-center gap-2"
+              onClick={() => setShowApprovedDeniedModal(true)}
+              className="bg-zinc-800 hover:bg-zinc-900 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider shadow-sm transition-all flex items-center gap-2 cursor-pointer"
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
-              </svg>
-              {votingSection === 1 ? "Show Invites" : "Show Bids"}
+              <span className="w-2 h-2 rounded-full bg-green-400" />
+              Show Approved / Denied
+              <span className="w-2 h-2 rounded-full bg-red-400" />
             </button>
           </div>
-        )}
+        ) : <div />}
 
-        {/* Right: Show Approved/Denied Pop-up Button */}
-        <div className="flex items-center gap-3">
+        {/* Right: Show Invites / Show Bids Button (Visible to ALL Members) */}
+        <div className="flex items-center">
           <button
-            onClick={() => setShowApprovedDeniedModal(true)}
-            className="bg-zinc-800 hover:bg-zinc-900 text-white px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider shadow-sm transition-all flex items-center gap-2"
+            onClick={() => setShowInvitesBidsModal(true)}
+            className="bg-red-700 hover:bg-red-800 text-white font-bold text-xs uppercase px-4 py-2 rounded-lg shadow-sm transition-all hover:scale-105 flex items-center gap-2 cursor-pointer"
           >
-            <span className="w-2 h-2 rounded-full bg-green-400" />
-            Show Approved / Denied
-            <span className="w-2 h-2 rounded-full bg-red-400" />
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+              />
+            </svg>
+            {votingSection === 1 ? "Show Invites" : "Show Bids"}
           </button>
         </div>
       </section>
@@ -1345,15 +1414,9 @@ export default function VoteDashboard() {
           <div className="flex items-center gap-2 flex-wrap">
             <button
               onClick={handlePrevPnm}
-              disabled={!roundActive || isLive || (countdownSeconds !== null && countdownSeconds > 0) || activeIndex <= 0}
-              className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-bold transition-colors flex items-center gap-1 border border-zinc-700"
-              title={
-                !roundActive
-                  ? "Start the round first"
-                  : isLive || (countdownSeconds !== null && countdownSeconds > 0)
-                    ? "Close voting before navigating"
-                    : "Previous candidate"
-              }
+              disabled={!roundActive || activeIndex <= 0}
+              className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-bold transition-colors flex items-center gap-1 border border-zinc-700 cursor-pointer"
+              title="Previous candidate"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
@@ -1365,18 +1428,10 @@ export default function VoteDashboard() {
               <select
                 value={activePnm?.student_id || ""}
                 onChange={(e) => handleSelectPresentationPnm(e.target.value)}
-                disabled={!roundActive || isLive || (countdownSeconds !== null && countdownSeconds > 0)}
-                title={
-                  !roundActive
-                    ? "Start the round first"
-                    : isLive || (countdownSeconds !== null && countdownSeconds > 0)
-                      ? "Close voting before selecting another candidate"
-                      : "Select candidate"
-                }
+                disabled={!roundActive}
+                title="Select candidate to present"
                 className={`bg-zinc-800 text-white text-xs font-semibold border border-zinc-700 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-red-600 max-w-[220px] md:max-w-xs truncate ${
-                  !roundActive || isLive || (countdownSeconds !== null && countdownSeconds > 0)
-                    ? "opacity-50 cursor-not-allowed"
-                    : "cursor-pointer"
+                  !roundActive ? "opacity-50 cursor-not-allowed" : "cursor-pointer"
                 }`}
               >
                 {filteredPnms.map((p, idx) => {
@@ -1393,60 +1448,15 @@ export default function VoteDashboard() {
 
             <button
               onClick={handleNextPnm}
-              disabled={
-                !roundActive ||
-                isLive ||
-                (countdownSeconds !== null && countdownSeconds > 0) ||
-                activeIndex >= filteredPnms.length - 1
-              }
-              className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-bold transition-colors flex items-center gap-1 border border-zinc-700"
-              title={
-                !roundActive
-                  ? "Start the round first"
-                  : isLive || (countdownSeconds !== null && countdownSeconds > 0)
-                    ? "Close voting before navigating"
-                    : "Next candidate"
-              }
+              disabled={!roundActive || activeIndex >= filteredPnms.length - 1}
+              className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed rounded-lg text-xs font-bold transition-colors flex items-center gap-1 border border-zinc-700 cursor-pointer"
+              title="Next candidate"
             >
               Next
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
               </svg>
             </button>
-
-            {/* Flipped Open/Close Voting Button right next to 'Next' arrow — only shows when round has started */}
-            {roundActive && activePnm && (
-              <div className="ml-1 sm:ml-2">
-                {!isLive ? (
-                  <button
-                    onClick={handleOpenVoting}
-                    className="bg-green-600 hover:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-                  >
-                    <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                    Open voting for {activePnm.full_name}
-                  </button>
-                ) : countdownSeconds !== null && countdownSeconds > 0 ? (
-                  <button
-                    disabled
-                    className="bg-amber-600 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold opacity-90 cursor-not-allowed flex items-center gap-1.5 animate-pulse"
-                  >
-                    Closing in {countdownSeconds}s...
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleInitiateClosingCountdown}
-                    className="bg-amber-600 hover:bg-amber-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-                    title="Starts 5-second countdown for everyone"
-                  >
-                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
-                      <circle cx="12" cy="12" r="10" />
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6l4 2" />
-                    </svg>
-                    Close voting for {activePnm.full_name} (5s)
-                  </button>
-                )}
-              </div>
-            )}
           </div>
 
           {/* Counters & Totals */}
@@ -1500,21 +1510,82 @@ export default function VoteDashboard() {
           /* ===================================================================== */
           /* PRESENTATION DETAILED VIEW                                            */
           /* ===================================================================== */
-          activePnm ? (
-            <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden flex flex-col transition-all duration-300">
+          <div>
+            {activePnm && (
+              <div className="bg-white rounded-xl shadow-lg border border-zinc-200 overflow-hidden flex flex-col transition-all duration-300">
               {/* Candidate Bar Header */}
               <div className="px-6 py-4 bg-zinc-900 text-white flex flex-wrap justify-between items-center gap-4">
                 <div className="flex items-center gap-3">
                   <span className="bg-red-700 text-white font-mono font-bold text-sm px-2.5 py-1 rounded-md">
                     #{activeIndex + 1} of {filteredPnms.length}
                   </span>
+                  <span className="text-zinc-600 font-mono">|</span>
                   <h2 className="text-2xl font-mono font-bold tracking-wide">{activePnm.full_name}</h2>
                 </div>
 
+                {/* Vote buttons in the top bar in the middle between #NUM of TOT | NAME -- Y/(A)/N -- major */}
+                <div className="flex items-center gap-2">
+                  {/* YES */}
+                  <button
+                    onClick={() => handleVote(activePnm.student_id, "yes")}
+                    disabled={!isLive}
+                    className={`px-4 py-1.5 rounded-lg font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer ${
+                      activeUserVote === "yes"
+                        ? "bg-green-600 text-white ring-2 ring-green-300 font-extrabold scale-105"
+                        : "bg-zinc-800 text-zinc-300 hover:bg-green-700 hover:text-white border border-zinc-700"
+                    } ${!isLive ? "opacity-50 cursor-not-allowed" : ""}`}
+                    title={isLive ? "Vote YES" : "Voting is closed"}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                    <span>YES</span>
+                  </button>
+
+                  {/* ABSTAIN */}
+                  {isAbstainAvailable && (
+                    <button
+                      onClick={() => handleVote(activePnm.student_id, "abstain")}
+                      disabled={!isLive}
+                      className={`px-4 py-1.5 rounded-lg font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer ${
+                        activeUserVote === "abstain"
+                          ? "bg-zinc-500 text-white ring-2 ring-zinc-300 font-extrabold scale-105"
+                          : "bg-zinc-800 text-zinc-300 hover:bg-zinc-600 hover:text-white border border-zinc-700"
+                      } ${!isLive ? "opacity-50 cursor-not-allowed" : ""}`}
+                      title={isLive ? "Vote ABSTAIN" : "Voting is closed"}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                        <circle cx="12" cy="12" r="10" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.93 4.93l14.14 14.14" />
+                      </svg>
+                      <span>ABSTAIN</span>
+                    </button>
+                  )}
+
+                  {/* NO */}
+                  <button
+                    onClick={() => handleVote(activePnm.student_id, "no")}
+                    disabled={!isLive}
+                    className={`px-4 py-1.5 rounded-lg font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer ${
+                      activeUserVote === "no"
+                        ? "bg-red-600 text-white ring-2 ring-red-300 font-extrabold scale-105"
+                        : "bg-zinc-800 text-zinc-300 hover:bg-red-700 hover:text-white border border-zinc-700"
+                    } ${!isLive ? "opacity-50 cursor-not-allowed" : ""}`}
+                    title={isLive ? "Vote NO" : "Voting is closed"}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                    <span>NO</span>
+                  </button>
+                </div>
+
                 <div className="flex items-center gap-3">
-                  <span className="text-xs font-mono text-zinc-300 hidden md:inline">{activePnm.email}</span>
+                  <span className="text-xs font-semibold text-zinc-300">
+                    {activePnm.major || "Undeclared"} — {activePnm.year || "N/A"}
+                  </span>
                   {hasViewFeedbackPrivilege && (
-                    <div className="flex gap-4 text-sm font-bold font-mono bg-zinc-800 px-3 py-1 rounded-md">
+                    <div className="flex gap-3 text-sm font-bold font-mono bg-zinc-800 px-3 py-1 rounded-md border border-zinc-700">
                       <span className="text-green-400">Y: {activePosVotes}</span>
                       {isAbstainAvailable && <span className="text-zinc-400">A: {activeAbstVotes}</span>}
                       <span className="text-red-400">N: {activeNegVotes}</span>
@@ -1959,295 +2030,370 @@ export default function VoteDashboard() {
                 </div>
               )}
             </div>
-          ) : null
-        ) : (
-          /* ===================================================================== */
-          /* STANDARD GRID VIEW (Section 1 Round 1)                                */
-          /* ===================================================================== */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredPnms.map((pnm) => {
-              const vote = votes[pnm.student_id] || null;
+          )}
 
-              return (
-                <div
-                  key={pnm.student_id}
-                  className="bg-white rounded-lg border border-zinc-200 shadow-sm overflow-hidden flex hover:shadow-md transition-shadow duration-300 h-44"
-                >
-                  {/* Photo */}
-                  <div className="relative w-1/3 bg-zinc-200 flex-shrink-0 flex items-center justify-center border-r border-zinc-200">
-                    {pnm.headshot_url ? (
-                      <img
-                        src={pnm.headshot_url}
-                        alt={`${pnm.full_name} Headshot`}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <svg className="w-12 h-12 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="1.5"
-                          d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+          {/* Candidates Grid Below Live Presentation Candidate */}
+          <div className="mt-10">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-mono font-bold text-zinc-800 uppercase tracking-wider">
+                All Candidates in Contest ({filteredPnms.length})
+              </h3>
+              <span className="text-xs text-zinc-500 font-medium">
+                {isLive ? "Voting is live for all candidates" : "Voting is currently closed"}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredPnms.map((pnm) => {
+                const vote = votes[pnm.student_id] || null;
+                const isCurrentActive = pnm.student_id === activePnm?.student_id;
+
+                return (
+                  <div
+                    key={pnm.student_id}
+                    className={`bg-white rounded-lg border shadow-sm overflow-hidden flex hover:shadow-md transition-all duration-300 h-44 ${
+                      isCurrentActive ? "border-2 border-red-600 ring-2 ring-red-100" : "border-zinc-200"
+                    }`}
+                  >
+                    {/* Photo */}
+                    <div className="relative w-1/3 bg-zinc-200 flex-shrink-0 flex items-center justify-center border-r border-zinc-200">
+                      {pnm.headshot_url ? (
+                        <img
+                          src={pnm.headshot_url}
+                          alt={`${pnm.full_name} Headshot`}
+                          className="w-full h-full object-cover"
                         />
-                      </svg>
-                    )}
-                  </div>
-
-                  {/* Info and Ballot */}
-                  <div className="w-2/3 p-4 flex flex-col justify-between min-w-0">
-                    <div>
-                      <h3 className="font-bold text-lg text-zinc-900 truncate leading-tight" title={pnm.full_name}>
-                        {pnm.full_name}
-                      </h3>
-                      <p
-                        className="text-zinc-600 text-xs font-semibold truncate mb-2"
-                        title={`${pnm.major || "Undeclared"} — ${pnm.year || "N/A"}`}
-                      >
-                        {pnm.major || "Undeclared"} — {pnm.year || "N/A"}
-                      </p>
-
-                      {/* 6 Attendance Dots */}
-                      <div className="flex items-center gap-2 my-1">
-                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider select-none leading-none">
-                          Attendance:
+                      ) : (
+                        <svg className="w-12 h-12 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth="1.5"
+                            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                          />
+                        </svg>
+                      )}
+                      {isCurrentActive && (
+                        <span className="absolute top-1.5 left-1.5 bg-red-700 text-white text-[9px] font-mono font-bold px-1.5 py-0.5 rounded shadow-sm">
+                          LIVE
                         </span>
-                        <div className="flex gap-1">
-                          {[
-                            pnm.event_1,
-                            pnm.event_2,
-                            pnm.event_3,
-                            pnm.event_4,
-                            pnm.event_5,
-                            pnm.event_6,
-                          ].map((attended, i) => (
-                            <span
-                              key={i}
-                              className={`w-3.5 h-3.5 rounded-full border shadow-sm ${attended
-                                ? "bg-green-500 border-green-600"
-                                : "bg-red-500 border-red-600"
-                                }`}
-                              title={`${EVENT_HEADERS[i]}: ${attended ? "Attended" : "Absent"}`}
-                            />
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Vote Counts (Officers only) */}
-                      {hasViewFeedbackPrivilege && (
-                        <div className="flex gap-6 text-[16px] font-bold mt-2.5 font-mono select-none leading-none">
-                          <span className="text-green-700">Y: {roundCounts[pnm.student_id]?.positive ?? 0}</span>
-                          {isAbstainAvailable && (
-                            <span className="text-zinc-500">A: {roundCounts[pnm.student_id]?.abstain ?? 0}</span>
-                          )}
-                          <span className="text-red-700">N: {roundCounts[pnm.student_id]?.negative ?? 0}</span>
-                        </div>
                       )}
                     </div>
 
-                    {/* Actions and Ballot */}
-                    <div className="flex items-center justify-between mt-2 pt-2 border-t border-zinc-100">
-                      <button
-                        onClick={() => handleOpenDetails(pnm)}
-                        className="px-3 py-1 bg-zinc-100 border border-zinc-300 rounded text-xs font-semibold text-zinc-700 hover:bg-zinc-200 hover:text-zinc-950 transition-colors"
-                      >
-                        Details
-                      </button>
-
-                      {/* Ballot Buttons */}
-                      <div className="flex gap-2">
-                        {/* Yes */}
-                        <button
-                          onClick={() => handleVote(pnm.student_id, "yes")}
-                          disabled={!isLive}
-                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${!isLive ? "opacity-40 cursor-not-allowed" : ""
-                            } ${vote === "yes"
-                              ? "bg-green-600 text-white shadow-md scale-105"
-                              : "bg-zinc-100 border border-zinc-300 text-green-700 hover:bg-green-50"
-                            }`}
-                          title={isLive ? "Vote Yes" : "Voting is closed"}
+                    {/* Info and Ballot */}
+                    <div className="w-2/3 p-4 flex flex-col justify-between min-w-0">
+                      <div>
+                        <h3
+                          className="font-bold text-lg text-zinc-900 truncate leading-tight cursor-pointer hover:text-red-700 transition-colors"
+                          title={pnm.full_name}
+                          onClick={() => handleSelectPresentationPnm(pnm.student_id)}
                         >
-                          <svg
-                            className="w-4 h-4"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                            strokeWidth="3"
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
+                          {pnm.full_name}
+                        </h3>
+                        <p
+                          className="text-zinc-600 text-xs font-semibold truncate mb-2"
+                          title={`${pnm.major || "Undeclared"} — ${pnm.year || "N/A"}`}
+                        >
+                          {pnm.major || "Undeclared"} — {pnm.year || "N/A"}
+                        </p>
+
+                        {/* 6 Attendance Dots */}
+                        <div className="flex items-center gap-2 my-1">
+                          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider select-none leading-none">
+                            Attendance:
+                          </span>
+                          <div className="flex gap-1">
+                            {[
+                              pnm.event_1,
+                              pnm.event_2,
+                              pnm.event_3,
+                              pnm.event_4,
+                              pnm.event_5,
+                              pnm.event_6,
+                            ].map((attended, i) => (
+                              <span
+                                key={i}
+                                className={`w-3.5 h-3.5 rounded-full border shadow-sm ${attended
+                                  ? "bg-green-500 border-green-600"
+                                  : "bg-red-500 border-red-600"
+                                  }`}
+                                title={`${EVENT_HEADERS[i]}: ${attended ? "Attended" : "Absent"}`}
+                              />
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Vote Counts (Officers only) */}
+                        {hasViewFeedbackPrivilege && (
+                          <div className="flex gap-6 text-[16px] font-bold mt-2.5 font-mono select-none leading-none">
+                            <span className="text-green-700">Y: {roundCounts[pnm.student_id]?.positive ?? 0}</span>
+                            {isAbstainAvailable && (
+                              <span className="text-zinc-500">A: {roundCounts[pnm.student_id]?.abstain ?? 0}</span>
+                            )}
+                            <span className="text-red-700">N: {roundCounts[pnm.student_id]?.negative ?? 0}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Actions and Ballot */}
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-zinc-100">
+                        <button
+                          onClick={() => handleOpenDetails(pnm)}
+                          className="px-3 py-1 bg-zinc-100 border border-zinc-300 rounded text-xs font-semibold text-zinc-700 hover:bg-zinc-200 hover:text-zinc-950 transition-colors cursor-pointer"
+                        >
+                          Details
                         </button>
 
-                        {/* Abstain (Only rendered if Abstain is Available) */}
-                        {isAbstainAvailable && (
+                        {/* Ballot Buttons */}
+                        <div className="flex gap-2">
+                          {/* Yes */}
                           <button
-                            onClick={() => handleVote(pnm.student_id, "abstain")}
+                            onClick={() => handleVote(pnm.student_id, "yes")}
                             disabled={!isLive}
-                            className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${!isLive ? "opacity-40 cursor-not-allowed" : ""
-                              } ${vote === "abstain"
-                                ? "bg-zinc-500 text-white shadow-md scale-105"
-                                : "bg-zinc-100 border border-zinc-300 text-zinc-600 hover:bg-zinc-200"
+                            className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer ${!isLive ? "opacity-40 cursor-not-allowed" : ""
+                              } ${vote === "yes"
+                                ? "bg-green-600 text-white shadow-md scale-105"
+                                : "bg-zinc-100 border border-zinc-300 text-green-700 hover:bg-green-50"
                               }`}
-                            title={isLive ? "Vote Abstain" : "Voting is closed"}
+                            title={isLive ? "Vote Yes" : "Voting is closed"}
                           >
                             <svg
                               className="w-4 h-4"
                               fill="none"
                               stroke="currentColor"
                               viewBox="0 0 24 24"
-                              strokeWidth="2.5"
+                              strokeWidth="3"
                             >
-                              <circle cx="12" cy="12" r="10" />
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M4.93 4.93l14.14 14.14" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                             </svg>
                           </button>
-                        )}
 
-                        {/* No */}
+                          {/* Abstain (Only rendered if Abstain is Available) */}
+                          {isAbstainAvailable && (
+                            <button
+                              onClick={() => handleVote(pnm.student_id, "abstain")}
+                              disabled={!isLive}
+                              className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer ${!isLive ? "opacity-40 cursor-not-allowed" : ""
+                                } ${vote === "abstain"
+                                  ? "bg-zinc-500 text-white shadow-md scale-105"
+                                  : "bg-zinc-100 border border-zinc-300 text-zinc-600 hover:bg-zinc-200"
+                                }`}
+                              title={isLive ? "Vote Abstain" : "Voting is closed"}
+                            >
+                              <svg
+                                className="w-4 h-4"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                                strokeWidth="2.5"
+                              >
+                                <circle cx="12" cy="12" r="10" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4.93 4.93l14.14 14.14" />
+                              </svg>
+                            </button>
+                          )}
+
+                          {/* No */}
+                          <button
+                            onClick={() => handleVote(pnm.student_id, "no")}
+                            disabled={!isLive}
+                            className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer ${!isLive ? "opacity-40 cursor-not-allowed" : ""
+                              } ${vote === "no"
+                                ? "bg-red-600 text-white shadow-md scale-105"
+                                : "bg-zinc-100 border border-zinc-300 text-red-700 hover:bg-red-50"
+                              }`}
+                            title={isLive ? "Vote No" : "Voting is closed"}
+                          >
+                            <svg
+                              className="w-4 h-4"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                              strokeWidth="3"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      ) : (
+        /* ===================================================================== */
+        /* STANDARD GRID VIEW (Section 1 Round 1)                                */
+        /* ===================================================================== */
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {filteredPnms.map((pnm) => {
+            const vote = votes[pnm.student_id] || null;
+
+            return (
+              <div
+                key={pnm.student_id}
+                className="bg-white rounded-lg border border-zinc-200 shadow-sm overflow-hidden flex hover:shadow-md transition-shadow duration-300 h-44"
+              >
+                {/* Photo */}
+                <div className="relative w-1/3 bg-zinc-200 flex-shrink-0 flex items-center justify-center border-r border-zinc-200">
+                  {pnm.headshot_url ? (
+                    <img
+                      src={pnm.headshot_url}
+                      alt={`${pnm.full_name} Headshot`}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <svg className="w-12 h-12 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="1.5"
+                        d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
+                      />
+                    </svg>
+                  )}
+                </div>
+
+                {/* Info and Ballot */}
+                <div className="w-2/3 p-4 flex flex-col justify-between min-w-0">
+                  <div>
+                    <h3 className="font-bold text-lg text-zinc-900 truncate leading-tight" title={pnm.full_name}>
+                      {pnm.full_name}
+                    </h3>
+                    <p
+                      className="text-zinc-600 text-xs font-semibold truncate mb-2"
+                      title={`${pnm.major || "Undeclared"} — ${pnm.year || "N/A"}`}
+                    >
+                      {pnm.major || "Undeclared"} — {pnm.year || "N/A"}
+                    </p>
+
+                    {/* 6 Attendance Dots */}
+                    <div className="flex items-center gap-2 my-1">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider select-none leading-none">
+                        Attendance:
+                      </span>
+                      <div className="flex gap-1">
+                        {[
+                          pnm.event_1,
+                          pnm.event_2,
+                          pnm.event_3,
+                          pnm.event_4,
+                          pnm.event_5,
+                          pnm.event_6,
+                        ].map((attended, i) => (
+                          <span
+                            key={i}
+                            className={`w-3.5 h-3.5 rounded-full border shadow-sm ${attended
+                              ? "bg-green-500 border-green-600"
+                              : "bg-red-500 border-red-600"
+                              }`}
+                            title={`${EVENT_HEADERS[i]}: ${attended ? "Attended" : "Absent"}`}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Vote Counts (Officers only) */}
+                    {hasViewFeedbackPrivilege && (
+                      <div className="flex gap-6 text-[16px] font-bold mt-2.5 font-mono select-none leading-none">
+                        <span className="text-green-700">Y: {roundCounts[pnm.student_id]?.positive ?? 0}</span>
+                        {isAbstainAvailable && (
+                          <span className="text-zinc-500">A: {roundCounts[pnm.student_id]?.abstain ?? 0}</span>
+                        )}
+                        <span className="text-red-700">N: {roundCounts[pnm.student_id]?.negative ?? 0}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Actions and Ballot */}
+                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-zinc-100">
+                    <button
+                      onClick={() => handleOpenDetails(pnm)}
+                      className="px-3 py-1 bg-zinc-100 border border-zinc-300 rounded text-xs font-semibold text-zinc-700 hover:bg-zinc-200 hover:text-zinc-950 transition-colors cursor-pointer"
+                    >
+                      Details
+                    </button>
+
+                    {/* Ballot Buttons */}
+                    <div className="flex gap-2">
+                      {/* Yes */}
+                      <button
+                        onClick={() => handleVote(pnm.student_id, "yes")}
+                        disabled={!isLive}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer ${!isLive ? "opacity-40 cursor-not-allowed" : ""
+                          } ${vote === "yes"
+                            ? "bg-green-600 text-white shadow-md scale-105"
+                            : "bg-zinc-100 border border-zinc-300 text-green-700 hover:bg-green-50"
+                          }`}
+                        title={isLive ? "Vote Yes" : "Voting is closed"}
+                      >
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          strokeWidth="3"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      </button>
+
+                      {/* Abstain (Only rendered if Abstain is Available) */}
+                      {isAbstainAvailable && (
                         <button
-                          onClick={() => handleVote(pnm.student_id, "no")}
+                          onClick={() => handleVote(pnm.student_id, "abstain")}
                           disabled={!isLive}
-                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 ${!isLive ? "opacity-40 cursor-not-allowed" : ""
-                            } ${vote === "no"
-                              ? "bg-red-600 text-white shadow-md scale-105"
-                              : "bg-zinc-100 border border-zinc-300 text-red-700 hover:bg-red-50"
+                          className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer ${!isLive ? "opacity-40 cursor-not-allowed" : ""
+                            } ${vote === "abstain"
+                              ? "bg-zinc-500 text-white shadow-md scale-105"
+                              : "bg-zinc-100 border border-zinc-300 text-zinc-600 hover:bg-zinc-200"
                             }`}
-                          title={isLive ? "Vote No" : "Voting is closed"}
+                          title={isLive ? "Vote Abstain" : "Voting is closed"}
                         >
                           <svg
                             className="w-4 h-4"
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
-                            strokeWidth="3"
+                            strokeWidth="2.5"
                           >
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                            <circle cx="12" cy="12" r="10" />
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.93 4.93l14.14 14.14" />
                           </svg>
                         </button>
-                      </div>
+                      )}
+
+                      {/* No */}
+                      <button
+                        onClick={() => handleVote(pnm.student_id, "no")}
+                        disabled={!isLive}
+                        className={`w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer ${!isLive ? "opacity-40 cursor-not-allowed" : ""
+                          } ${vote === "no"
+                            ? "bg-red-600 text-white shadow-md scale-105"
+                            : "bg-zinc-100 border border-zinc-300 text-red-700 hover:bg-red-50"
+                          }`}
+                        title={isLive ? "Vote No" : "Voting is closed"}
+                      >
+                        <svg
+                          className="w-4 h-4"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                          strokeWidth="3"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </main>
-
-      {/* ========================================================================= */}
-      {/* HOVERING VOTE BAR (FOR EVERYONE IN PRESENTATION MODE)                      */}
-      {/* ========================================================================= */}
-      {isPresentationRound && activePnm && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 w-11/12 max-w-lg">
-          <div className="bg-zinc-900/95 text-white backdrop-blur-md px-6 py-3.5 rounded-2xl shadow-2xl border border-zinc-700/60 flex items-center justify-between gap-4 transition-all duration-300">
-            {activeUserVote && !isChangingVote ? (
-              <div className="w-full flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-full bg-green-500/20 text-green-400 border border-green-500/40 flex items-center justify-center flex-shrink-0">
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                  </div>
-                  <div>
-                    {isVoteRevealed ? (
-                      <span
-                        className={`text-xs font-bold px-2.5 py-1 rounded-full uppercase tracking-wider ${activeUserVote === "yes"
-                          ? "bg-green-600 text-white"
-                          : activeUserVote === "no"
-                            ? "bg-red-600 text-white"
-                            : "bg-zinc-600 text-white"
-                          }`}
-                      >
-                        Voted: {activeUserVote}
-                      </span>
-                    ) : (
-                      <span className="text-sm font-semibold text-zinc-200">Vote Recorded (Hidden)</span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setIsVoteRevealed(!isVoteRevealed)}
-                    className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold border border-zinc-700 transition-colors"
-                  >
-                    {isVoteRevealed ? "Hide Vote" : "Show Vote"}
-                  </button>
-                  <button
-                    onClick={() => setIsChangingVote(true)}
-                    disabled={!isLive}
-                    className="px-3 py-1.5 bg-red-700 hover:bg-red-800 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-semibold shadow-sm transition-colors"
-                  >
-                    Change Vote
-                  </button>
-                </div>
               </div>
-            ) : (
-              <div className="w-full flex items-center justify-between gap-3">
-                <div className="flex gap-2 w-full">
-                  {/* YES */}
-                  <button
-                    onClick={() => handleVote(activePnm.student_id, "yes")}
-                    disabled={!isLive}
-                    className="flex-1 bg-green-600 hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-2.5 px-3 rounded-xl transition-all shadow-md hover:scale-105 active:scale-95 flex items-center justify-center gap-1.5 text-sm"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                    YES
-                  </button>
-
-                  {/* ABSTAIN (Only rendered if Abstain is Available) */}
-                  {isAbstainAvailable && (
-                    <button
-                      onClick={() => handleVote(activePnm.student_id, "abstain")}
-                      disabled={!isLive}
-                      className="flex-1 bg-zinc-600 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-2.5 px-3 rounded-xl transition-all shadow-md hover:scale-105 active:scale-95 flex items-center justify-center gap-1.5 text-sm"
-                    >
-                      <svg
-                        className="w-4 h-4"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                        strokeWidth="2.5"
-                      >
-                        <circle cx="12" cy="12" r="10" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.93 4.93l14.14 14.14" />
-                      </svg>
-                      ABSTAIN
-                    </button>
-                  )}
-
-                  {/* NO */}
-                  <button
-                    onClick={() => handleVote(activePnm.student_id, "no")}
-                    disabled={!isLive}
-                    className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-2.5 px-3 rounded-xl transition-all shadow-md hover:scale-105 active:scale-95 flex items-center justify-center gap-1.5 text-sm"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                    NO
-                  </button>
-
-                  {isChangingVote && activeUserVote && (
-                    <button
-                      onClick={() => setIsChangingVote(false)}
-                      className="px-2.5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold border border-zinc-700 transition-colors"
-                      title="Keep previous vote"
-                    >
-                      Cancel
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+            );
+          })}
         </div>
       )}
-
-      {/* ========================================================================= */}
-      {/* REGENT SETUP POP-UP MODAL (2-STEP CONFIRMATION)                           */}
-      {/* ========================================================================= */}
+    </main>
       {showSetupModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex justify-center items-center z-50 p-4 text-zinc-950">
           <div className="bg-white rounded-2xl shadow-2xl border border-zinc-200 w-full max-w-md overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
@@ -2350,130 +2496,275 @@ export default function VoteDashboard() {
       {/* ========================================================================= */}
       {showApprovedDeniedModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex justify-center items-center z-50 p-4 text-zinc-950">
-          <div className="bg-white rounded-2xl shadow-2xl border border-zinc-200 w-full max-w-4xl max-h-[85vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl border border-zinc-200 w-full max-w-6xl max-h-[88vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+            {/* Header */}
             <div className="px-6 py-4 bg-zinc-900 text-white flex justify-between items-center flex-shrink-0">
               <div className="flex items-center gap-3">
                 <h3 className="text-lg font-mono font-bold tracking-wide">
-                  Approved & Denied Candidates
+                  Candidate Evaluation Results
                 </h3>
-                <span className="text-xs font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
-                  Section {votingSection}: {votingSection === 1 ? "Invite" : "Bid"} — Round {votingRound}
+                <span className="text-xs font-mono font-bold px-2.5 py-1 rounded bg-amber-400/20 text-amber-300 border border-amber-400/40">
+                  S{votingSection} R{votingRound} Evaluation Shown
                 </span>
               </div>
               <button
                 onClick={() => setShowApprovedDeniedModal(false)}
-                className="text-zinc-400 hover:text-white font-bold text-2xl leading-none"
+                className="text-zinc-400 hover:text-white font-bold text-2xl leading-none cursor-pointer"
               >
                 &times;
               </button>
             </div>
 
-            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-y-auto flex-1">
+            {/* Calculation & Threshold Top Bar */}
+            <div className="bg-zinc-950 text-zinc-200 px-6 py-3.5 border-b border-zinc-800 flex flex-col gap-2.5 flex-shrink-0">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-zinc-900/90 p-3 rounded-xl border border-zinc-800">
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-400 animate-pulse" />
+                  <span className="font-mono font-bold text-xs text-white uppercase tracking-wider">
+                    Threshold Rule:
+                  </span>
+                </div>
+                <div className="text-xs font-mono font-medium text-amber-300 bg-zinc-950 px-3 py-1.5 rounded-lg border border-zinc-800 leading-relaxed whitespace-normal break-words">
+                  {currentThresholdDescription}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between text-[11px] text-zinc-400 border-t border-zinc-800/80 pt-2 gap-2 font-mono">
+                <div>
+                  <strong className="text-zinc-300">Formulas:</strong> Y/N% = (Yes / (Yes + No)) &times; 100 | A/T% = (Abstain / Total) &times; 100
+                </div>
+                <div className="flex items-center gap-3">
+                  <span>
+                    <strong className="text-zinc-300">Quota:</strong>{" "}
+                    <span className="text-white font-bold">{votingSection === 1 ? inviteTargetCount || "None" : bidTargetCount || "None"}</span>
+                  </span>
+                  <span>
+                    <strong className="text-red-400">Denied: {deniedPnms.length}</strong>
+                  </span>
+                  <span>
+                    <strong className="text-amber-400">In Contest: {inContestPnms.length}</strong>
+                  </span>
+                  <span>
+                    <strong className="text-green-400">Approved: {approvedPnms.length}</strong>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Candidates 3-Column Lists */}
+            <div className="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-y-auto flex-1 bg-zinc-50">
               {/* Left Column: Denied (Red Theme) */}
-              <div className="bg-red-50/70 border-2 border-red-200 rounded-xl p-4 flex flex-col gap-3">
+              <div className="bg-red-50/70 border-2 border-red-200 rounded-xl p-4 flex flex-col gap-3 shadow-xs">
                 <div className="flex justify-between items-center border-b border-red-200 pb-2">
                   <div className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded-full bg-red-600" />
-                    <h4 className="font-bold text-red-900 text-base">Denied Candidates</h4>
+                    <h4 className="font-bold text-red-900 text-base">Denied</h4>
                   </div>
                   <span className="text-xs font-mono font-bold px-2 py-0.5 bg-red-200 text-red-900 rounded-full">
                     {deniedPnms.length}
                   </span>
                 </div>
 
-                <div className="flex flex-col gap-2 overflow-y-auto max-h-[450px] pr-1">
+                <div className="flex flex-col gap-2 overflow-y-auto max-h-[420px] pr-1">
                   {deniedPnms.length === 0 ? (
                     <p className="text-xs text-red-600/80 italic py-6 text-center">
-                      No candidates currently marked as denied in this round.
+                      No candidates marked as denied.
                     </p>
                   ) : (
-                    deniedPnms.map((pnm) => (
-                      <div
-                        key={pnm.student_id}
-                        className="bg-white border border-red-200 rounded-lg p-2.5 flex items-center gap-3 shadow-xs hover:border-red-400 transition-colors"
-                      >
-                        <div className="w-10 h-10 rounded-full bg-red-100 border border-red-300 overflow-hidden flex-shrink-0 flex items-center justify-center">
-                          {pnm.headshot_url ? (
-                            <img
-                              src={pnm.headshot_url}
-                              alt={pnm.full_name}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <span className="font-bold text-red-700 text-xs">
-                              {pnm.full_name.charAt(0)}
+                    deniedPnms.map((pnm) => {
+                      const counts = roundCounts[pnm.student_id];
+                      const pos = counts?.positive ?? 0;
+                      const neg = counts?.negative ?? 0;
+                      const abst = counts?.abstain ?? 0;
+                      const ynTotal = pos + neg;
+                      const allTotal = pos + neg + abst;
+                      const ynPct = ynTotal > 0 ? ((pos * 100) / ynTotal).toFixed(1) + "%" : "N/A";
+                      const atPct = allTotal > 0 ? ((abst * 100) / allTotal).toFixed(1) + "%" : "0.0%";
+
+                      return (
+                        <div
+                          key={pnm.student_id}
+                          className="bg-white border border-red-200 rounded-lg p-2.5 flex items-center gap-3 shadow-xs hover:border-red-400 transition-colors"
+                        >
+                          <div className="w-10 h-10 rounded-full bg-red-100 border border-red-300 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                            {pnm.headshot_url ? (
+                              <img
+                                src={pnm.headshot_url}
+                                alt={pnm.full_name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <span className="font-bold text-red-700 text-xs">
+                                {pnm.full_name.charAt(0)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="truncate min-w-0 flex-1">
+                            <span className="font-bold text-sm text-zinc-900 truncate block">
+                              {pnm.full_name}
                             </span>
-                          )}
+                            <span className="text-[11px] text-zinc-500 truncate block font-mono">
+                              {pnm.email || "No email on file"}
+                            </span>
+                          </div>
+                          <div className="flex flex-col items-end gap-0.5 ml-auto flex-shrink-0 font-mono">
+                            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-900 border border-red-200">
+                              Y/N: {ynPct}
+                            </span>
+                            <span className="text-[10px] font-medium text-zinc-500">
+                              A/T: {atPct}
+                            </span>
+                          </div>
                         </div>
-                        <div className="truncate min-w-0">
-                          <span className="font-bold text-sm text-zinc-900 truncate block">
-                            {pnm.full_name}
-                          </span>
-                          <span className="text-[11px] text-zinc-500 truncate block">
-                            {pnm.major || "Undeclared"}
-                          </span>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Middle Column: In Contest (Amber Theme) */}
+              <div className="bg-amber-50/70 border-2 border-amber-200 rounded-xl p-4 flex flex-col gap-3 shadow-xs">
+                <div className="flex justify-between items-center border-b border-amber-200 pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-3 h-3 rounded-full bg-amber-500" />
+                    <h4 className="font-bold text-amber-900 text-base">In Contest</h4>
+                  </div>
+                  <span className="text-xs font-mono font-bold px-2 py-0.5 bg-amber-200 text-amber-900 rounded-full">
+                    {inContestPnms.length}
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-2 overflow-y-auto max-h-[420px] pr-1">
+                  {inContestPnms.length === 0 ? (
+                    <p className="text-xs text-amber-700/80 italic py-6 text-center">
+                      No candidates currently in contest.
+                    </p>
+                  ) : (
+                    inContestPnms.map((pnm) => {
+                      const counts = roundCounts[pnm.student_id];
+                      const pos = counts?.positive ?? 0;
+                      const neg = counts?.negative ?? 0;
+                      const abst = counts?.abstain ?? 0;
+                      const ynTotal = pos + neg;
+                      const allTotal = pos + neg + abst;
+                      const ynPct = ynTotal > 0 ? ((pos * 100) / ynTotal).toFixed(1) + "%" : "N/A";
+                      const atPct = allTotal > 0 ? ((abst * 100) / allTotal).toFixed(1) + "%" : "0.0%";
+
+                      return (
+                        <div
+                          key={pnm.student_id}
+                          className="bg-white border border-amber-200 rounded-lg p-2.5 flex items-center gap-3 shadow-xs hover:border-amber-400 transition-colors"
+                        >
+                          <div className="w-10 h-10 rounded-full bg-amber-100 border border-amber-300 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                            {pnm.headshot_url ? (
+                              <img
+                                src={pnm.headshot_url}
+                                alt={pnm.full_name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <span className="font-bold text-amber-800 text-xs">
+                                {pnm.full_name.charAt(0)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="truncate min-w-0 flex-1">
+                            <span className="font-bold text-sm text-zinc-900 truncate block">
+                              {pnm.full_name}
+                            </span>
+                            <span className="text-[11px] text-zinc-500 truncate block font-mono">
+                              {pnm.email || "No email on file"}
+                            </span>
+                          </div>
+                          <div className="flex flex-col items-end gap-0.5 ml-auto flex-shrink-0 font-mono">
+                            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-200">
+                              Y/N: {ynPct}
+                            </span>
+                            <span className="text-[10px] font-medium text-zinc-500">
+                              A/T: {atPct}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
 
               {/* Right Column: Approved (Green Theme) */}
-              <div className="bg-green-50/70 border-2 border-green-200 rounded-xl p-4 flex flex-col gap-3">
+              <div className="bg-green-50/70 border-2 border-green-200 rounded-xl p-4 flex flex-col gap-3 shadow-xs">
                 <div className="flex justify-between items-center border-b border-green-200 pb-2">
                   <div className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded-full bg-green-600" />
-                    <h4 className="font-bold text-green-900 text-base">Approved Candidates</h4>
+                    <h4 className="font-bold text-green-900 text-base">Approved</h4>
                   </div>
                   <span className="text-xs font-mono font-bold px-2 py-0.5 bg-green-200 text-green-900 rounded-full">
                     {approvedPnms.length}
                   </span>
                 </div>
 
-                <div className="flex flex-col gap-2 overflow-y-auto max-h-[450px] pr-1">
+                <div className="flex flex-col gap-2 overflow-y-auto max-h-[420px] pr-1">
                   {approvedPnms.length === 0 ? (
                     <p className="text-xs text-green-700/80 italic py-6 text-center">
-                      No candidates currently marked as approved in this round.
+                      No candidates marked as approved in this round.
                     </p>
                   ) : (
-                    approvedPnms.map((pnm) => (
-                      <div
-                        key={pnm.student_id}
-                        className="bg-white border border-green-200 rounded-lg p-2.5 flex items-center gap-3 shadow-xs hover:border-green-400 transition-colors"
-                      >
-                        <div className="w-10 h-10 rounded-full bg-green-100 border border-green-300 overflow-hidden flex-shrink-0 flex items-center justify-center">
-                          {pnm.headshot_url ? (
-                            <img
-                              src={pnm.headshot_url}
-                              alt={pnm.full_name}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <span className="font-bold text-green-700 text-xs">
-                              {pnm.full_name.charAt(0)}
+                    approvedPnms.map((pnm) => {
+                      const counts = roundCounts[pnm.student_id];
+                      const pos = counts?.positive ?? 0;
+                      const neg = counts?.negative ?? 0;
+                      const abst = counts?.abstain ?? 0;
+                      const ynTotal = pos + neg;
+                      const allTotal = pos + neg + abst;
+                      const ynPct = ynTotal > 0 ? ((pos * 100) / ynTotal).toFixed(1) + "%" : "N/A";
+                      const atPct = allTotal > 0 ? ((abst * 100) / allTotal).toFixed(1) + "%" : "0.0%";
+
+                      return (
+                        <div
+                          key={pnm.student_id}
+                          className="bg-white border border-green-200 rounded-lg p-2.5 flex items-center gap-3 shadow-xs hover:border-green-400 transition-colors"
+                        >
+                          <div className="w-10 h-10 rounded-full bg-green-100 border border-green-300 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                            {pnm.headshot_url ? (
+                              <img
+                                src={pnm.headshot_url}
+                                alt={pnm.full_name}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <span className="font-bold text-green-700 text-xs">
+                                {pnm.full_name.charAt(0)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="truncate min-w-0 flex-1">
+                            <span className="font-bold text-sm text-zinc-900 truncate block">
+                              {pnm.full_name}
                             </span>
-                          )}
+                            <span className="text-[11px] text-zinc-500 truncate block font-mono">
+                              {pnm.email || "No email on file"}
+                            </span>
+                          </div>
+                          <div className="flex flex-col items-end gap-0.5 ml-auto flex-shrink-0 font-mono">
+                            <span className="text-[11px] font-bold px-1.5 py-0.5 rounded bg-green-100 text-green-900 border border-green-200">
+                              Y/N: {ynPct}
+                            </span>
+                            <span className="text-[10px] font-medium text-zinc-500">
+                              A/T: {atPct}
+                            </span>
+                          </div>
                         </div>
-                        <div className="truncate min-w-0">
-                          <span className="font-bold text-sm text-zinc-900 truncate block">
-                            {pnm.full_name}
-                          </span>
-                          <span className="text-[11px] text-zinc-500 truncate block">
-                            {pnm.major || "Undeclared"}
-                          </span>
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
               </div>
             </div>
 
-            <div className="px-6 py-3.5 bg-zinc-50 border-t border-zinc-200 flex justify-end">
+            <div className="px-6 py-3.5 bg-white border-t border-zinc-200 flex justify-end">
               <button
                 onClick={() => setShowApprovedDeniedModal(false)}
-                className="bg-zinc-800 hover:bg-zinc-900 text-white px-5 py-1.5 rounded-lg text-xs font-bold transition-colors"
+                className="bg-zinc-800 hover:bg-zinc-900 text-white px-5 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
               >
                 Close
               </button>
@@ -2498,7 +2789,8 @@ export default function VoteDashboard() {
                   <span className="font-bold text-white">
                     {votingSection === 1 ? inviteTargetCount || "Not set" : bidTargetCount || "Not set"}
                   </span>{" "}
-                  | Total Approved: <span className="font-bold text-green-400">{approvedPnms.length}</span>
+                  | Total Approved in Section {votingSection}:{" "}
+                  <span className="font-bold text-green-400">{sectionApprovedPnms.length}</span>
                 </p>
               </div>
               <button
@@ -2510,13 +2802,13 @@ export default function VoteDashboard() {
             </div>
 
             <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-3">
-              {approvedPnms.length === 0 ? (
+              {sectionApprovedPnms.length === 0 ? (
                 <div className="text-center py-12 text-zinc-500 text-sm">
                   No candidates have been approved for {votingSection === 1 ? "invites" : "bids"} yet.
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {approvedPnms.map((pnm, idx) => (
+                  {sectionApprovedPnms.map((pnm, idx) => (
                     <div
                       key={pnm.student_id}
                       className="bg-zinc-50 border border-zinc-200 rounded-xl p-3 flex items-center gap-3 shadow-xs"
@@ -2536,7 +2828,7 @@ export default function VoteDashboard() {
                       <div className="truncate min-w-0 flex-1">
                         <h5 className="font-bold text-sm text-zinc-900 truncate">{pnm.full_name}</h5>
                         <p className="text-xs text-zinc-500 truncate">{pnm.major || "Undeclared"}</p>
-                        <p className="text-[10px] font-mono text-zinc-400">{pnm.student_id}</p>
+                        <p className="text-[10px] font-mono text-zinc-400">{pnm.year || "Year Not Specified"}</p>
                       </div>
                     </div>
                   ))}
@@ -2557,9 +2849,9 @@ export default function VoteDashboard() {
       )}
 
       {/* ========================================================================= */}
-      {/* DETAILS POPUP MODAL (FOR GRID MODE)                                       */}
+      {/* DETAILS POPUP MODAL                                                       */}
       {/* ========================================================================= */}
-      {!isPresentationRound && selectedPnmForDetails && (
+      {selectedPnmForDetails && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="flex gap-4 max-w-7xl w-full h-[90vh] items-stretch justify-center">
             <div className="bg-white rounded-xl shadow-2xl border border-zinc-200 flex-1 flex flex-col overflow-hidden">

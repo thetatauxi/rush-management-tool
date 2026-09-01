@@ -34,6 +34,14 @@ type PNM = {
   application_comments: string | null;
   interviewer_names: string | null;
   interview_notes: string | null;
+  review_code?: string | null;
+};
+
+type ReviewSplitItem = {
+  code: string;
+  reviewerIndex: number;
+  pnmCount: number;
+  studentIds: string[];
 };
 
 type FeedbackItem = {
@@ -62,6 +70,14 @@ export default function SearchPnmPage() {
   const [hasViewFeedbackPrivilege, setHasViewFeedbackPrivilege] = useState(false);
   const [appCommitteeEnabled, setAppCommitteeEnabled] = useState(false);
 
+  // Split Search for Rush Committee States
+  const [showSplitModal, setShowSplitModal] = useState(false);
+  const [reviewerCountInput, setReviewerCountInput] = useState("10");
+  const [isGeneratingSplit, setIsGeneratingSplit] = useState(false);
+  const [activeSplitCodes, setActiveSplitCodes] = useState<ReviewSplitItem[]>([]);
+  const [copiedAll, setCopiedAll] = useState(false);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+
   // Details Modal States
   const [selectedPnmForDetails, setSelectedPnmForDetails] = useState<PNM | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -87,7 +103,7 @@ export default function SearchPnmPage() {
     checkAuth();
   }, [router]);
 
-  // Load PNMs, user role, and voting ops settings
+  // Load PNMs, user role, voting ops settings, and existing review splits
   useEffect(() => {
     if (checkingAuth) return;
 
@@ -139,7 +155,60 @@ export default function SearchPnmPage() {
           .order("full_name", { ascending: true });
 
         if (error) throw error;
-        setPnms(data || []);
+        const pnmList: PNM[] = data || [];
+        setPnms(pnmList);
+
+        // Fetch existing review splits if available
+        try {
+          const { data: splitRows } = await supabase
+            .from("pnm_review_splits")
+            .select("*")
+            .order("reviewer_index", { ascending: true });
+
+          if (splitRows && splitRows.length > 0) {
+            const map: Record<string, { code: string; reviewerIndex: number; studentIds: string[] }> = {};
+            splitRows.forEach((r: any) => {
+              if (!map[r.code]) {
+                map[r.code] = {
+                  code: r.code,
+                  reviewerIndex: r.reviewer_index,
+                  studentIds: [],
+                };
+              }
+              map[r.code].studentIds.push(r.student_id);
+            });
+
+            const items: ReviewSplitItem[] = Object.values(map)
+              .sort((a, b) => a.reviewerIndex - b.reviewerIndex)
+              .map((v) => ({
+                code: v.code,
+                reviewerIndex: v.reviewerIndex,
+                pnmCount: v.studentIds.length,
+                studentIds: v.studentIds,
+              }));
+            setActiveSplitCodes(items);
+          } else {
+            // Group by review_code column from pnms
+            const codeMap: Record<string, string[]> = {};
+            pnmList.forEach((p) => {
+              if (p.review_code) {
+                if (!codeMap[p.review_code]) codeMap[p.review_code] = [];
+                codeMap[p.review_code].push(p.student_id);
+              }
+            });
+            if (Object.keys(codeMap).length > 0) {
+              const items: ReviewSplitItem[] = Object.entries(codeMap).map(([code, ids], idx) => ({
+                code,
+                reviewerIndex: idx + 1,
+                pnmCount: ids.length,
+                studentIds: ids,
+              }));
+              setActiveSplitCodes(items);
+            }
+          }
+        } catch (splitErr) {
+          console.warn("Notice: Review splits table check:", splitErr);
+        }
       } catch (err) {
         console.error("Error loading PNM data:", err);
         toast.error("Failed to load PNM directory.");
@@ -151,29 +220,202 @@ export default function SearchPnmPage() {
     fetchData();
   }, [checkingAuth]);
 
-  // Multi-field search filtering (sorted alphabetically)
-  const filteredPnms = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    let list = [...pnms];
+  // Check if current search query matches a review split hex code
+  const activeSplitMatch = useMemo(() => {
+    const raw = searchQuery.trim();
+    if (!raw) return null;
+    const clean = raw.replace(/^#/, "").toUpperCase();
 
-    if (query) {
-      const terms = query.split(/\s+/).filter(Boolean);
-      list = list.filter((pnm) => {
-        const searchableFields = [
-          pnm.full_name,
-          pnm.email,
-          pnm.student_id,
-          pnm.major || "",
-          pnm.year || "",
-          pnm.interviewer_names || "",
-        ].join(" ").toLowerCase();
+    const fromList = activeSplitCodes.find((s) => s.code.toUpperCase() === clean);
+    if (fromList) return fromList;
 
-        return terms.every((term) => searchableFields.includes(term));
-      });
+    const count = pnms.filter((p) => p.review_code && p.review_code.toUpperCase() === clean).length;
+    if (count > 0) {
+      return {
+        code: clean,
+        reviewerIndex: 0,
+        pnmCount: count,
+        studentIds: [],
+      };
     }
+    return null;
+  }, [searchQuery, activeSplitCodes, pnms]);
+
+  // Multi-field search filtering & hex code review split filtering (sorted alphabetically)
+  const filteredPnms = useMemo(() => {
+    const raw = searchQuery.trim();
+    if (!raw) {
+      return [...pnms].sort((a, b) => a.full_name.localeCompare(b.full_name));
+    }
+
+    const clean = raw.replace(/^#/, "").toUpperCase();
+
+    // If query matches a review split hex code, filter strictly to assigned PNMs
+    const isSplitCodeMatch = pnms.some(
+      (p) => p.review_code && p.review_code.toUpperCase() === clean
+    );
+
+    if (isSplitCodeMatch) {
+      return pnms
+        .filter((p) => p.review_code && p.review_code.toUpperCase() === clean)
+        .sort((a, b) => a.full_name.localeCompare(b.full_name));
+    }
+
+    // Standard multi-field search
+    const terms = raw.toLowerCase().split(/\s+/).filter(Boolean);
+    const list = pnms.filter((pnm) => {
+      const searchableFields = [
+        pnm.full_name,
+        pnm.email,
+        pnm.student_id,
+        pnm.major || "",
+        pnm.year || "",
+        pnm.interviewer_names || "",
+        pnm.review_code || "",
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return terms.every((term) => searchableFields.includes(term));
+    });
 
     return list.sort((a, b) => a.full_name.localeCompare(b.full_name));
   }, [pnms, searchQuery]);
+
+  // Handle generating equal and random PNM review splits
+  const handleGenerateSplits = async () => {
+    const numReviewers = parseInt(reviewerCountInput.trim(), 10);
+    if (isNaN(numReviewers) || numReviewers <= 0) {
+      toast.error("Please enter a valid number of reviewers (at least 1).");
+      return;
+    }
+
+    if (pnms.length === 0) {
+      toast.error("No PNMs available to split.");
+      return;
+    }
+
+    setIsGeneratingSplit(true);
+    try {
+      let splitResults: ReviewSplitItem[] = [];
+
+      // 1. Try calling the PostgreSQL stored procedure
+      const { data: rpcData, error: rpcError } = await supabase.rpc("split_pnm_reviews", {
+        p_num_reviewers: numReviewers,
+      });
+
+      if (!rpcError && rpcData && Array.isArray(rpcData) && rpcData.length > 0) {
+        splitResults = rpcData.map((r: any) => ({
+          code: r.code,
+          reviewerIndex: r.reviewer_index,
+          pnmCount: r.pnm_count,
+          studentIds: r.student_ids || [],
+        }));
+      } else {
+        // Fallback: Client-side Fisher-Yates random shuffle & assignment
+        const shuffled = [...pnms];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+
+        const codesSet = new Set<string>();
+        while (codesSet.size < numReviewers) {
+          const hex = Math.floor(Math.random() * 0xffffff)
+            .toString(16)
+            .padStart(6, "0")
+            .toUpperCase();
+          codesSet.add(hex);
+        }
+        const hexCodes = Array.from(codesSet);
+
+        const base = Math.floor(shuffled.length / numReviewers);
+        const rem = shuffled.length % numReviewers;
+        let offset = 0;
+
+        splitResults = [];
+        for (let i = 0; i < numReviewers; i++) {
+          const count = base + (i < rem ? 1 : 0);
+          if (count <= 0) continue;
+          const slice = shuffled.slice(offset, offset + count);
+          offset += count;
+          splitResults.push({
+            code: hexCodes[i],
+            reviewerIndex: i + 1,
+            pnmCount: slice.length,
+            studentIds: slice.map((p) => p.student_id),
+          });
+        }
+
+        // Persist to database
+        try {
+          for (const split of splitResults) {
+            await supabase
+              .from("pnms")
+              .update({ review_code: split.code })
+              .in("student_id", split.studentIds);
+          }
+          await supabase.from("pnm_review_splits").delete().neq("id", 0);
+          const splitRows = splitResults.flatMap((s) =>
+            s.studentIds.map((sid) => ({
+              code: s.code,
+              student_id: sid,
+              reviewer_index: s.reviewerIndex,
+              total_reviewers: numReviewers,
+            }))
+          );
+          await supabase.from("pnm_review_splits").insert(splitRows);
+        } catch (dbErr) {
+          console.warn("DB update for review splits:", dbErr);
+        }
+      }
+
+      // Update in-memory PNMs
+      const idToCode: Record<string, string> = {};
+      splitResults.forEach((s) => {
+        s.studentIds.forEach((sid) => {
+          idToCode[sid] = s.code;
+        });
+      });
+
+      setPnms((prev) =>
+        prev.map((p) => ({
+          ...p,
+          review_code: idToCode[p.student_id] || null,
+        }))
+      );
+
+      setActiveSplitCodes(splitResults);
+      toast.success(
+        `Generated ${splitResults.length} unique hex codes for ${pnms.length} PNMs!`
+      );
+    } catch (err: any) {
+      console.error("Error generating review splits:", err);
+      toast.error(err?.message || "Failed to generate splits.");
+    } finally {
+      setIsGeneratingSplit(false);
+    }
+  };
+
+  // Copy all generated hex codes separated by newline for 1-click spreadsheet paste
+  const handleCopyAllCodes = () => {
+    if (activeSplitCodes.length === 0) return;
+    const text = activeSplitCodes.map((s) => s.code).join("\n");
+    navigator.clipboard.writeText(text);
+    setCopiedAll(true);
+    toast.success(
+      `Copied ${activeSplitCodes.length} codes to clipboard! Paste directly into your spreadsheet.`
+    );
+    setTimeout(() => setCopiedAll(false), 2500);
+  };
+
+  // Copy a single hex code
+  const handleCopySingleCode = (code: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedCode(code);
+    toast.success(`Copied code #${code}`);
+    setTimeout(() => setCopiedCode(null), 2000);
+  };
 
   // Details Modal Handlers
   const handleOpenDetails = (pnm: PNM) => {
@@ -309,6 +551,8 @@ export default function SearchPnmPage() {
   const isRushCommitteeOnly = userRole.toLowerCase() === "rush committee" && !isRushChair;
   const canEdit = isRushChair || (userRole.toLowerCase() === "rush committee" && appCommitteeEnabled);
 
+  const canSplitSearch = isRushChair;
+
   if (checkingAuth) {
     return (
       <div className="flex min-h-screen items-center justify-center font-sans">
@@ -360,13 +604,13 @@ export default function SearchPnmPage() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by name, email, student ID, major, year..."
+              placeholder="Search by name, email, student ID, major, year, or paste reviewer hex code..."
               className="w-full pl-10 pr-10 py-3 bg-zinc-50 border border-zinc-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-700 text-zinc-900 placeholder-zinc-400 text-sm font-medium shadow-inner transition-all"
             />
             {searchQuery && (
               <button
                 onClick={() => setSearchQuery("")}
-                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-zinc-400 hover:text-zinc-700 transition-colors"
+                className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-zinc-400 hover:text-zinc-700 transition-colors cursor-pointer"
                 title="Clear search"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -376,14 +620,51 @@ export default function SearchPnmPage() {
             )}
           </div>
 
-          {/* Result Count (Right Side) */}
-          <div className="flex items-center justify-end w-full md:w-auto">
+          {/* Result Count & Split Search (Right Side) */}
+          <div className="flex items-center justify-end gap-3 w-full md:w-auto">
             <div className="bg-zinc-100 text-zinc-800 border border-zinc-200/80 px-3.5 py-1.5 rounded-lg text-xs font-bold font-mono shadow-2xs whitespace-nowrap">
               <span className="text-red-700 font-extrabold text-sm mr-1">{filteredPnms.length}</span>
               {filteredPnms.length === 1 ? "PNM" : "PNMs"} Found
             </div>
+
+            {canSplitSearch && (
+              <button
+                onClick={() => setShowSplitModal(true)}
+                className="bg-zinc-900 hover:bg-zinc-800 text-white border border-zinc-700 px-3.5 py-1.5 rounded-lg text-xs font-bold font-mono shadow-sm transition-all hover:scale-105 flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                title="Split PNMs equally and randomly among reviewers"
+              >
+                <svg className="w-3.5 h-3.5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                </svg>
+                Split Search
+              </button>
+            )}
           </div>
         </div>
+
+        {/* Active Split Filter Banner */}
+        {activeSplitMatch && (
+          <div className="mt-3 bg-red-50/90 border border-red-200 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs font-mono text-red-950 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-pulse" />
+              <span>
+                Active Reviewer Split:{" "}
+                <strong className="bg-red-200/80 text-red-950 px-1.5 py-0.5 rounded font-bold">
+                  #{activeSplitMatch.code}
+                </strong>
+              </span>
+              <span className="text-zinc-600 font-sans">
+                &bull; Showing <strong>{filteredPnms.length}</strong> randomly assigned candidate{filteredPnms.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            <button
+              onClick={() => setSearchQuery("")}
+              className="bg-white hover:bg-red-100 text-red-700 border border-red-300 px-2.5 py-1 rounded text-xs font-bold font-sans transition-colors cursor-pointer"
+            >
+              Clear Split Filter
+            </button>
+          </div>
+        )}
       </section>
 
       {/* Main Content Area */}
@@ -1137,6 +1418,207 @@ export default function SearchPnmPage() {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SPLIT SEARCH MODAL (FOR RUSH COMMITTEE)                                   */}
+      {/* ========================================================================= */}
+      {showSplitModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex justify-center items-center z-50 p-4 text-zinc-950">
+          <div className="bg-white rounded-2xl shadow-2xl border border-zinc-200 w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="px-6 py-4 bg-zinc-900 text-white flex justify-between items-center flex-shrink-0">
+              <div>
+                <h3 className="text-lg font-mono font-bold tracking-wide flex items-center gap-2">
+                  <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                  </svg>
+                  SPLIT SEARCH &amp; REVIEW GENERATOR
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Divide {pnms.length} PNMs equally and randomly among reviewers
+                </p>
+              </div>
+              <button
+                onClick={() => setShowSplitModal(false)}
+                className="text-zinc-400 hover:text-white font-bold text-2xl leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-6">
+              {/* Setup Input */}
+              <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-4.5 flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4">
+                <div className="flex-1 w-full">
+                  <label className="block text-xs font-mono font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
+                    Enter # of Reviewers
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="1"
+                      max={pnms.length || 100}
+                      value={reviewerCountInput}
+                      onChange={(e) => setReviewerCountInput(e.target.value)}
+                      placeholder="e.g. 10"
+                      className="w-full text-base font-mono font-bold border border-zinc-300 rounded-lg px-3.5 py-2 bg-white text-zinc-900 focus:outline-none focus:ring-2 focus:ring-red-700"
+                    />
+                    <span className="absolute right-3.5 top-2.5 text-xs font-mono text-zinc-400 font-semibold">
+                      Reviewers
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 mt-1.5 font-medium">
+                    {parseInt(reviewerCountInput, 10) > 0 && pnms.length > 0
+                      ? `~${Math.floor(pnms.length / parseInt(reviewerCountInput, 10))}${
+                          pnms.length % parseInt(reviewerCountInput, 10) !== 0
+                            ? `-${Math.ceil(pnms.length / parseInt(reviewerCountInput, 10))}`
+                            : ""
+                        } PNMs per reviewer. No duplicates or omissions.`
+                      : `Total directory pool: ${pnms.length} candidates.`}
+                  </p>
+                </div>
+
+                <button
+                  onClick={handleGenerateSplits}
+                  disabled={isGeneratingSplit || pnms.length === 0}
+                  className="w-full sm:w-auto bg-red-700 hover:bg-red-800 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider px-5 py-2.5 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer h-[42px] whitespace-nowrap"
+                >
+                  {isGeneratingSplit ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Splitting...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 00-3.7-3.7 48.678 48.678 0 00-7.324 0 4.006 4.006 0 00-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3l-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 003.7 3.7 48.656 48.656 0 007.324 0 4.006 4.006 0 003.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3l-3 3" />
+                      </svg>
+                      {activeSplitCodes.length > 0 ? "Re-Shuffle & Split" : "Generate Split Codes"}
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Active / Generated Codes List */}
+              {activeSplitCodes.length > 0 ? (
+                <div className="flex flex-col gap-3">
+                  {/* Action Bar with Spreadsheet Copy */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-zinc-900 text-white p-3.5 rounded-xl">
+                    <div>
+                      <div className="font-mono font-bold text-xs flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                        <span>{activeSplitCodes.length} Reviewer Codes Generated</span>
+                      </div>
+                      <p className="text-[11px] text-zinc-400 mt-0.5">
+                        {pnms.length} candidates partitioned equally
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={handleCopyAllCodes}
+                      className="bg-green-600 hover:bg-green-700 text-white font-bold font-mono text-xs px-4 py-2 rounded-lg shadow-sm transition-all hover:scale-105 flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+                      title="Copy all hex codes to clipboard (1 per line for spreadsheet pasting)"
+                    >
+                      {copiedAll ? (
+                        <>
+                          <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                          Copied to Clipboard!
+                        </>
+                      ) : (
+                        <>
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                          </svg>
+                          Copy All Codes (Spreadsheet Ready)
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Instruction Tip */}
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-[11px] text-amber-900 leading-relaxed font-sans">
+                    💡 <strong>Spreadsheet Ready:</strong> Click <em>&quot;Copy All Codes (Spreadsheet Ready)&quot;</em> and paste (Ctrl+V / Cmd+V) into your Google Sheet or Excel column (each code will populate its own row). Reviewers can paste their assigned code into the search bar to inspect their assigned candidate partition.
+                  </div>
+
+                  {/* Grid / List of Reviewer Codes */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[340px] overflow-y-auto pr-1">
+                    {activeSplitCodes.map((item, idx) => (
+                      <div
+                        key={item.code}
+                        className="bg-zinc-50 hover:bg-zinc-100/80 border border-zinc-200 rounded-xl p-3 flex items-center justify-between gap-3 transition-colors shadow-2xs"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className="text-xs font-mono font-bold text-zinc-400 w-6 flex-shrink-0">
+                            #{idx + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono font-extrabold text-sm text-zinc-950 tracking-wider">
+                                #{item.code}
+                              </span>
+                              <span className="text-[10px] font-mono font-bold bg-zinc-200/80 text-zinc-700 px-1.5 py-0.5 rounded">
+                                {item.pnmCount} PNMs
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-zinc-500 font-sans truncate block">
+                              Reviewer {idx + 1} Assignment
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <button
+                            onClick={() => handleCopySingleCode(item.code)}
+                            className="bg-white hover:bg-zinc-200 text-zinc-700 border border-zinc-300 p-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                            title={`Copy code #${item.code}`}
+                          >
+                            {copiedCode === item.code ? (
+                              <svg className="w-3.5 h-3.5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                              </svg>
+                            ) : (
+                              <svg className="w-3.5 h-3.5 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                              </svg>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSearchQuery(item.code);
+                              setShowSplitModal(false);
+                            }}
+                            className="bg-zinc-900 hover:bg-zinc-800 text-white px-2.5 py-1.5 rounded-lg text-[11px] font-mono font-bold transition-colors cursor-pointer"
+                            title="Filter directory with this reviewer code"
+                          >
+                            Search
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-10 bg-zinc-50 rounded-xl border border-dashed border-zinc-200 text-zinc-500 text-xs">
+                  No reviewer split codes generated yet. Enter the number of reviewers above and click &quot;Generate Split Codes&quot;.
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-3.5 bg-zinc-50 border-t border-zinc-200 flex justify-end">
+              <button
+                onClick={() => setShowSplitModal(false)}
+                className="bg-zinc-800 hover:bg-zinc-900 text-white px-5 py-2 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
