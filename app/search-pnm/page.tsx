@@ -1451,12 +1451,12 @@ export default function SearchPnmPage() {
             {/* Modal Body */}
             <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-6">
               {/* Setup Input */}
-              <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-4.5 flex flex-col sm:flex-row items-start sm:items-end justify-between gap-4">
-                <div className="flex-1 w-full">
-                  <label className="block text-xs font-mono font-bold text-zinc-700 uppercase tracking-wider mb-1.5">
-                    Enter # of Reviewers
-                  </label>
-                  <div className="relative">
+              <div className="bg-zinc-50 border border-zinc-200 rounded-xl p-4.5 flex flex-col gap-2">
+                <label className="block text-xs font-mono font-bold text-zinc-700 uppercase tracking-wider">
+                  Enter # of Reviewers
+                </label>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <div className="relative flex-1">
                     <input
                       type="number"
                       min="1"
@@ -1464,42 +1464,43 @@ export default function SearchPnmPage() {
                       value={reviewerCountInput}
                       onChange={(e) => setReviewerCountInput(e.target.value)}
                       placeholder="e.g. 10"
-                      className="w-full text-base font-mono font-bold border border-zinc-300 rounded-lg px-3.5 py-2 bg-white text-zinc-900 focus:outline-none focus:ring-2 focus:ring-red-700"
+                      className="w-full h-11 text-base font-mono font-bold border border-zinc-300 rounded-lg pl-3.5 pr-24 bg-white text-zinc-900 focus:outline-none focus:ring-2 focus:ring-red-700"
                     />
-                    <span className="absolute right-3.5 top-2.5 text-xs font-mono text-zinc-400 font-semibold">
+                    <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-mono text-zinc-400 font-semibold pointer-events-none select-none">
                       Reviewers
                     </span>
                   </div>
-                  <p className="text-[11px] text-zinc-500 mt-1.5 font-medium">
-                    {parseInt(reviewerCountInput, 10) > 0 && pnms.length > 0
-                      ? `~${Math.floor(pnms.length / parseInt(reviewerCountInput, 10))}${
-                          pnms.length % parseInt(reviewerCountInput, 10) !== 0
-                            ? `-${Math.ceil(pnms.length / parseInt(reviewerCountInput, 10))}`
-                            : ""
-                        } PNMs per reviewer. No duplicates or omissions.`
-                      : `Total directory pool: ${pnms.length} candidates.`}
-                  </p>
+
+                  <button
+                    onClick={handleGenerateSplits}
+                    disabled={isGeneratingSplit || pnms.length === 0}
+                    className="w-full sm:w-auto h-11 bg-red-700 hover:bg-red-800 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider px-5 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+                  >
+                    {isGeneratingSplit ? (
+                      <>
+                        <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        Splitting...
+                      </>
+                    ) : (
+                      <>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 00-3.7-3.7 48.678 48.678 0 00-7.324 0 4.006 4.006 0 00-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3l-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 003.7 3.7 48.656 48.656 0 007.324 0 4.006 4.006 0 003.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3l-3 3" />
+                        </svg>
+                        {activeSplitCodes.length > 0 ? "Re-Shuffle & Split" : "Generate Split Codes"}
+                      </>
+                    )}
+                  </button>
                 </div>
 
-                <button
-                  onClick={handleGenerateSplits}
-                  disabled={isGeneratingSplit || pnms.length === 0}
-                  className="w-full sm:w-auto bg-red-700 hover:bg-red-800 disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider px-5 py-2.5 rounded-lg shadow-sm transition-all flex items-center justify-center gap-2 cursor-pointer h-[42px] whitespace-nowrap"
-                >
-                  {isGeneratingSplit ? (
-                    <>
-                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Splitting...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12c0-1.232-.046-2.453-.138-3.662a4.006 4.006 0 00-3.7-3.7 48.678 48.678 0 00-7.324 0 4.006 4.006 0 00-3.7 3.7c-.017.22-.032.441-.046.662M19.5 12l3-3m-3 3l-3-3m-12 3c0 1.232.046 2.453.138 3.662a4.006 4.006 0 003.7 3.7 48.656 48.656 0 007.324 0 4.006 4.006 0 003.7-3.7c.017-.22.032-.441.046-.662M4.5 12l3 3m-3-3l-3 3" />
-                      </svg>
-                      {activeSplitCodes.length > 0 ? "Re-Shuffle & Split" : "Generate Split Codes"}
-                    </>
-                  )}
-                </button>
+                <p className="text-[11px] text-zinc-500 font-medium">
+                  {parseInt(reviewerCountInput, 10) > 0 && pnms.length > 0
+                    ? `~${Math.floor(pnms.length / parseInt(reviewerCountInput, 10))}${
+                        pnms.length % parseInt(reviewerCountInput, 10) !== 0
+                          ? `-${Math.ceil(pnms.length / parseInt(reviewerCountInput, 10))}`
+                          : ""
+                      } PNMs per reviewer. No duplicates or omissions.`
+                    : `Total directory pool: ${pnms.length} candidates.`}
+                </p>
               </div>
 
               {/* Active / Generated Codes List */}
