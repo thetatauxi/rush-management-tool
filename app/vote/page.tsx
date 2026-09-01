@@ -555,7 +555,7 @@ export default function VoteDashboard() {
     }
   }, [isPresentationRound, activePnm?.student_id]);
 
-  // 5-second countdown timer effect with loop protection
+  // Display the countdown locally, but let the database decide when it has elapsed.
   useEffect(() => {
     if (!closingEndsAt) {
       setCountdownSeconds(null);
@@ -563,36 +563,44 @@ export default function VoteDashboard() {
       return;
     }
 
+    let cancelled = false;
+
     const updateTimer = async () => {
       const endMs = new Date(closingEndsAt).getTime();
+      if (Number.isNaN(endMs)) {
+        console.error("Invalid closing_ends_at timestamp:", closingEndsAt);
+        setCountdownSeconds(null);
+        return;
+      }
+
       const nowMs = Date.now();
       const diffSeconds = Math.ceil((endMs - nowMs) / 1000);
 
       if (diffSeconds <= 0) {
         setCountdownSeconds(0);
-        setClosingEndsAt(null);
-        setVotingStatus("closed"); // Optimistic immediate close!
-        setRoundStatus("completed");
 
         if (!isClosingRef.current) {
           isClosingRef.current = true;
           try {
-            const { error } = await supabase.rpc("end_round", {
+            const { data: didClose, error } = await supabase.rpc("finish_voting_countdown", {
               p_section: votingSection,
               p_round: votingRound,
             });
-            if (error) {
-              console.error("Error in end_round RPC:", error);
-              // Direct fallback update
-              await supabase
-                .from("voting-ops")
-                .update({ round_status: "completed", voting_status: "closed", closing_ends_at: null })
-                .eq("id", 1);
+            if (error) throw error;
+
+            // A fast client clock can reach zero before the database clock. In that
+            // case didClose is false and the interval safely retries.
+            if (didClose && !cancelled) {
+              setClosingEndsAt(null);
+              setVotingStatus("closed");
+              setRoundStatus("completed");
+              toast.info("Voting closed and round thresholds evaluated.");
+              fetchRoundCounts();
             }
-            toast.info("Voting closed and round thresholds evaluated.");
-            fetchRoundCounts();
           } catch (err) {
-            console.error("Error ending round:", err);
+            console.error("Error finalizing voting countdown:", err);
+          } finally {
+            isClosingRef.current = false;
           }
         }
       } else {
@@ -602,8 +610,11 @@ export default function VoteDashboard() {
 
     updateTimer();
     const interval = setInterval(updateTimer, 250);
-    return () => clearInterval(interval);
-  }, [closingEndsAt, isPresentationRound, fetchRoundCounts]);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [closingEndsAt, votingSection, votingRound, fetchRoundCounts]);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -700,8 +711,12 @@ export default function VoteDashboard() {
   // Regent Controls: 5-second closing countdown
   const handleInitiateClosingCountdown = async () => {
     try {
-      const { error } = await supabase.rpc("start_voting_countdown");
+      const { data: deadline, error } = await supabase.rpc("begin_voting_countdown");
       if (error) throw error;
+      if (!deadline) throw new Error("Voting is not currently open for an active round.");
+
+      setClosingEndsAt(deadline);
+      setVotingStatus("closing");
       toast.warning("5-second closing countdown started!");
     } catch (err) {
       console.error("Error initiating closing countdown:", err);

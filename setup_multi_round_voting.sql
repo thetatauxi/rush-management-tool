@@ -15,6 +15,8 @@ DROP FUNCTION IF EXISTS public.open_pnm_voting();
 DROP FUNCTION IF EXISTS public.close_candidate_voting();
 DROP FUNCTION IF EXISTS public.close_pnm_voting();
 DROP FUNCTION IF EXISTS public.start_voting_countdown();
+DROP FUNCTION IF EXISTS public.begin_voting_countdown();
+DROP FUNCTION IF EXISTS public.finish_voting_countdown(integer, integer);
 DROP FUNCTION IF EXISTS public.close_voting();
 DROP FUNCTION IF EXISTS public.select_candidate(text);
 DROP FUNCTION IF EXISTS public.toggle_app_committee();
@@ -491,30 +493,67 @@ END;
 $$;
 
 -- 12. Stored Procedures: Round-Level Countdown & Close Controls
+CREATE OR REPLACE FUNCTION public.begin_voting_countdown()
+RETURNS timestamptz
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_deadline timestamptz;
+BEGIN
+    UPDATE public."voting-ops"
+    SET voting_status = 'closing',
+        closing_ends_at = clock_timestamp() + interval '5 seconds',
+        updated_at = clock_timestamp()
+    WHERE id = 1
+      AND round_status = 'in_progress'
+      AND voting_status = 'open'
+    RETURNING closing_ends_at INTO v_deadline;
+
+    RETURN v_deadline;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.start_voting_countdown()
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 BEGIN
-    UPDATE public."voting-ops"
-    SET voting_status = 'closing',
-        closing_ends_at = now() + interval '5 seconds',
-        updated_at = now()
-    WHERE id = 1;
+    PERFORM public.begin_voting_countdown();
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.close_voting()
-RETURNS void
+CREATE OR REPLACE FUNCTION public.finish_voting_countdown(p_section integer, p_round integer)
+RETURNS boolean
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
     v_sec integer;
     v_rnd integer;
+    v_round_status text;
+    v_voting_status text;
+    v_closing_ends_at timestamptz;
 BEGIN
-    SELECT section, round INTO v_sec, v_rnd FROM public."voting-ops" WHERE id = 1;
+    SELECT section, round, round_status, voting_status, closing_ends_at
+    INTO v_sec, v_rnd, v_round_status, v_voting_status, v_closing_ends_at
+    FROM public."voting-ops"
+    WHERE id = 1
+    FOR UPDATE;
+
+    IF NOT FOUND
+       OR v_sec <> p_section
+       OR v_rnd <> p_round
+       OR v_round_status <> 'in_progress'
+       OR v_voting_status <> 'closing'
+       OR v_closing_ends_at IS NULL
+       OR v_closing_ends_at > clock_timestamp() THEN
+        RETURN false;
+    END IF;
 
     BEGIN
         PERFORM public.evaluate_round_thresholds(v_sec, v_rnd);
@@ -526,8 +565,25 @@ BEGIN
     SET round_status = 'completed',
         voting_status = 'closed',
         closing_ends_at = NULL,
-        updated_at = now()
+        updated_at = clock_timestamp()
     WHERE id = 1;
+
+    RETURN true;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.close_voting()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_sec integer;
+    v_rnd integer;
+BEGIN
+    SELECT section, round INTO v_sec, v_rnd FROM public."voting-ops" WHERE id = 1;
+    PERFORM public.finish_voting_countdown(v_sec, v_rnd);
 END;
 $$;
 
@@ -535,20 +591,10 @@ CREATE OR REPLACE FUNCTION public.end_round(p_section integer, p_round integer)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 BEGIN
-    BEGIN
-        PERFORM public.evaluate_round_thresholds(p_section, p_round);
-    EXCEPTION WHEN others THEN
-        RAISE WARNING 'evaluate_round_thresholds error: %', SQLERRM;
-    END;
-
-    UPDATE public."voting-ops"
-    SET round_status = 'completed',
-        voting_status = 'closed',
-        closing_ends_at = NULL,
-        updated_at = now()
-    WHERE id = 1;
+    PERFORM public.finish_voting_countdown(p_section, p_round);
 END;
 $$;
 
@@ -644,6 +690,8 @@ GRANT EXECUTE ON FUNCTION public.switch_round(integer, integer) TO authenticated
 GRANT EXECUTE ON FUNCTION public.start_round(integer, integer) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.end_round(integer, integer) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.start_voting_countdown() TO authenticated, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.begin_voting_countdown() TO authenticated, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.finish_voting_countdown(integer, integer) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.close_voting() TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.select_candidate(text) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.toggle_app_committee() TO authenticated, anon, service_role;
@@ -799,4 +847,3 @@ BEGIN
     EXCEPTION WHEN duplicate_object THEN NULL; WHEN others THEN NULL;
     END;
 END $$;
-
