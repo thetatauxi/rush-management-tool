@@ -186,23 +186,25 @@ export default function QuickFeedback() {
                     <li key={pnm.student_id}>
                       <button
                         onClick={() => handleSelectPnm(pnm)}
+                        title={pnm.full_name}
                         className="w-full text-left px-4 py-2.5 hover:bg-zinc-50 text-sm text-zinc-850 font-medium transition-colors flex items-center gap-3"
                       >
                         {pnm.headshot_url ? (
                           <img
                             src={pnm.headshot_url}
                             alt={pnm.full_name}
+                            title={pnm.full_name}
                             className="w-7 h-7 rounded-full object-cover border border-zinc-200 flex-shrink-0"
                           />
                         ) : (
-                          <div className="w-7 h-7 rounded-full bg-zinc-200 border border-zinc-305 text-zinc-650 text-[10px] font-bold flex items-center justify-center flex-shrink-0">
+                          <div className="w-7 h-7 rounded-full bg-zinc-200 border border-zinc-305 text-zinc-650 text-[10px] font-bold flex items-center justify-center flex-shrink-0" title={pnm.full_name}>
                             {pnm.full_name
                               .split(" ")
                               .map((n) => n[0])
                               .join("")}
                           </div>
                         )}
-                        <span>{pnm.full_name}</span>
+                        <span title={pnm.full_name}>{pnm.full_name}</span>
                       </button>
                     </li>
                   ))}
@@ -222,10 +224,11 @@ export default function QuickFeedback() {
                     <img
                       src={selectedPnm.headshot_url}
                       alt={selectedPnm.full_name}
+                      title={selectedPnm.full_name}
                       className="w-14 h-14 rounded-lg object-cover border border-zinc-200 shadow-xs flex-shrink-0"
                     />
                   ) : (
-                    <div className="w-14 h-14 rounded-lg bg-zinc-100 border border-zinc-305 text-zinc-700 text-md font-bold flex items-center justify-center flex-shrink-0">
+                    <div className="w-14 h-14 rounded-lg bg-zinc-100 border border-zinc-305 text-zinc-700 text-md font-bold flex items-center justify-center flex-shrink-0" title={selectedPnm.full_name}>
                       {selectedPnm.full_name
                         .split(" ")
                         .map((n) => n[0])
@@ -233,7 +236,7 @@ export default function QuickFeedback() {
                     </div>
                   )}
                   <div>
-                    <h2 className="text-lg font-bold text-zinc-900 leading-tight">
+                    <h2 className="text-lg font-bold text-zinc-900 leading-tight" title={selectedPnm.full_name}>
                       {selectedPnm.full_name}
                     </h2>
                     <span className="text-xs text-zinc-400 font-mono">

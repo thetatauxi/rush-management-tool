@@ -20,12 +20,15 @@ DROP FUNCTION IF EXISTS public.finish_voting_countdown(integer, integer);
 DROP FUNCTION IF EXISTS public.close_voting();
 DROP FUNCTION IF EXISTS public.select_candidate(text);
 DROP FUNCTION IF EXISTS public.toggle_app_committee();
+DROP FUNCTION IF EXISTS public.toggle_invite_bid_list();
 DROP FUNCTION IF EXISTS public.setup_section(integer, integer);
+DROP FUNCTION IF EXISTS public.setup_section(integer, integer, integer);
 DROP FUNCTION IF EXISTS public.setup_voting_section(integer, integer);
 DROP FUNCTION IF EXISTS public.switch_round(integer, integer);
 DROP FUNCTION IF EXISTS public.initialize_round_data(integer);
 DROP FUNCTION IF EXISTS public.initialize_round_data(integer, integer);
 DROP FUNCTION IF EXISTS public.evaluate_round_thresholds(integer, integer);
+DROP FUNCTION IF EXISTS public.override_candidate_status(integer, integer, text, text);
 DROP FUNCTION IF EXISTS public.cast_vote(text, uuid, integer, text);
 DROP FUNCTION IF EXISTS public.cast_vote(text, uuid, integer, integer, text);
 DROP FUNCTION IF EXISTS public.cast_vote(text, text, integer, integer, text);
@@ -39,6 +42,8 @@ CREATE TABLE public."voting-ops" (
     round integer NOT NULL DEFAULT 1 CHECK (round IN (1, 2, 3)),
     invite_quota integer,
     bid_quota integer,
+    voter_threshold integer NOT NULL DEFAULT 1,
+    invite_bid_list_shown boolean NOT NULL DEFAULT false,
     round_status text NOT NULL DEFAULT 'idle' CHECK (round_status IN ('idle', 'in_progress', 'completed')),
     voting_status text NOT NULL DEFAULT 'closed' CHECK (voting_status IN ('closed', 'open', 'closing')),
     active_pnm_id text,
@@ -47,6 +52,9 @@ CREATE TABLE public."voting-ops" (
     app_committee_enabled boolean NOT NULL DEFAULT false,
     updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public."voting-ops" ADD COLUMN IF NOT EXISTS voter_threshold integer NOT NULL DEFAULT 1;
+ALTER TABLE public."voting-ops" ADD COLUMN IF NOT EXISTS invite_bid_list_shown boolean NOT NULL DEFAULT false;
 
 INSERT INTO public."voting-ops" (id, section, round, round_status, voting_status, app_committee_enabled)
 VALUES (1, 1, 1, 'idle', 'closed', false);
@@ -147,6 +155,7 @@ BEGIN
         EXECUTE format('ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS negative integer NOT NULL DEFAULT 0', tbl);
         EXECUTE format('ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS abstain integer NOT NULL DEFAULT 0', tbl);
         EXECUTE format('ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT ''in_contest''', tbl);
+        EXECUTE format('ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS is_overridden boolean NOT NULL DEFAULT false', tbl);
         EXECUTE format('ALTER TABLE public.%I ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now()', tbl);
     END LOOP;
 END $$;
@@ -198,6 +207,7 @@ DECLARE
     v_fill_quota boolean := false;
     v_target integer;
     v_approved_prev integer := 0;
+    v_approved_manual integer := 0;
     v_remaining_spots integer := 999;
 BEGIN
     v_table := 'voting-s' || p_section || '-r' || p_round;
@@ -230,7 +240,7 @@ BEGIN
     IF v_fill_quota IS NULL THEN v_fill_quota := false; END IF;
 
     IF v_fill_quota THEN
-        -- Calculate remaining quota spots
+        -- Calculate remaining quota spots taking into account previous round approvals and current manual overrides
         IF p_section = 1 THEN
             SELECT invite_quota INTO v_target FROM public."voting-ops" WHERE id = 1;
             SELECT COUNT(*) INTO v_approved_prev FROM public."voting-s1-r1" WHERE status = 'approved';
@@ -242,22 +252,32 @@ BEGIN
             INTO v_approved_prev;
         END IF;
 
+        BEGIN
+            EXECUTE format('
+                SELECT COUNT(*) FROM public.%I 
+                WHERE status = ''approved'' AND COALESCE(is_overridden, false) = true',
+                v_table
+            ) INTO v_approved_manual;
+        EXCEPTION WHEN others THEN
+            v_approved_manual := 0;
+        END;
+
         IF v_target IS NULL OR v_target <= 0 THEN
             v_remaining_spots := 999;
         ELSE
-            v_remaining_spots := GREATEST(0, v_target - COALESCE(v_approved_prev, 0));
+            v_remaining_spots := GREATEST(0, v_target - COALESCE(v_approved_prev, 0) - COALESCE(v_approved_manual, 0));
         END IF;
 
-        -- Step 1: Default all candidates to denied
+        -- Step 1: Default all non-overridden candidates to denied
         EXECUTE format('
             UPDATE public.%I
             SET status = ''denied'',
                 updated_at = now()
-            WHERE id IS NOT NULL',
+            WHERE id IS NOT NULL AND COALESCE(is_overridden, false) = false',
             v_table
         );
 
-        -- Step 2: Rank eligible candidates meeting the minimum Y/N cutoff and approve top spots
+        -- Step 2: Rank eligible candidates meeting the minimum Y/N cutoff and approve top spots (excluding manual overrides)
         EXECUTE format('
             WITH ranked_candidates AS (
                 SELECT id,
@@ -269,6 +289,7 @@ BEGIN
                 FROM public.%I
                 WHERE (COALESCE(positive, 0) + COALESCE(negative, 0)) > 0
                   AND (%s < 0 OR ((COALESCE(positive, 0) * 100.0) / NULLIF(COALESCE(positive, 0) + COALESCE(negative, 0), 0)) >= %s)
+                  AND COALESCE(is_overridden, false) = false
             )
             UPDATE public.%I t
             SET status = CASE 
@@ -277,7 +298,7 @@ BEGIN
             END,
             updated_at = now()
             FROM ranked_candidates r
-            WHERE t.id = r.id',
+            WHERE t.id = r.id AND COALESCE(t.is_overridden, false) = false',
             v_table,
             v_deny_yn,
             v_deny_yn,
@@ -286,7 +307,7 @@ BEGIN
         );
 
     ELSE
-        -- Standard percentage threshold evaluation with safe WHERE clause
+        -- Standard percentage threshold evaluation with safe WHERE clause (never overwrites manual overrides)
         EXECUTE format('
             UPDATE public.%I
             SET status = CASE
@@ -298,7 +319,7 @@ BEGIN
                 ELSE ''in_contest''
             END,
             updated_at = now()
-            WHERE id IS NOT NULL',
+            WHERE id IS NOT NULL AND COALESCE(is_overridden, false) = false',
             v_table,
             v_deny_yn, v_deny_yn,
             v_approve_yn, v_approve_yn,
@@ -371,7 +392,7 @@ END;
 $$;
 
 -- 9. Stored Procedure: setup_section
-CREATE OR REPLACE FUNCTION public.setup_section(p_section integer, p_quota integer)
+CREATE OR REPLACE FUNCTION public.setup_section(p_section integer, p_quota integer, p_voter_threshold integer DEFAULT NULL)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -388,6 +409,7 @@ BEGIN
         SET section = 1,
             round = 1,
             invite_quota = p_quota,
+            voter_threshold = COALESCE(p_voter_threshold, voter_threshold, 1),
             round_status = 'idle',
             voting_status = 'closed',
             active_pnm_id = NULL,
@@ -408,6 +430,7 @@ BEGIN
         SET section = 2,
             round = 1,
             bid_quota = p_quota,
+            voter_threshold = COALESCE(p_voter_threshold, voter_threshold, 1),
             round_status = 'idle',
             voting_status = 'closed',
             active_pnm_id = NULL,
@@ -416,6 +439,17 @@ BEGIN
             updated_at = now()
         WHERE id = 1;
     END IF;
+END;
+$$;
+
+-- Backward compatibility overload: setup_section(integer, integer)
+CREATE OR REPLACE FUNCTION public.setup_section(p_section integer, p_quota integer)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    PERFORM public.setup_section(p_section, p_quota, NULL);
 END;
 $$;
 
@@ -429,7 +463,59 @@ BEGIN
 END;
 $$;
 
--- 10. Stored Procedure: switch_round
+-- 10. Stored Procedure: override_candidate_status (Regent / VR Manual Override)
+CREATE OR REPLACE FUNCTION public.override_candidate_status(
+    p_section integer,
+    p_round integer,
+    p_student_id text,
+    p_status text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_table text;
+BEGIN
+    v_table := 'voting-s' || p_section || '-r' || p_round;
+
+    EXECUTE format('
+        INSERT INTO public.%I (id, positive, negative, abstain, status, is_overridden, updated_at)
+        VALUES (%L, 0, 0, 0, %L, true, now())
+        ON CONFLICT (id) DO UPDATE
+        SET status = %L,
+            is_overridden = true,
+            updated_at = now()',
+        v_table,
+        p_student_id, p_status,
+        p_status
+    );
+
+    -- If candidate was changed to in_contest in S1 R1, ensure they exist in S1 R2
+    IF p_section = 1 AND p_round = 1 AND p_status = 'in_contest' THEN
+        BEGIN
+            INSERT INTO public."voting-s1-r2" (id, positive, negative, abstain, status, is_overridden)
+            VALUES (p_student_id, 0, 0, 0, 'in_contest', false)
+            ON CONFLICT (id) DO NOTHING;
+        EXCEPTION WHEN others THEN
+            NULL;
+        END;
+    END IF;
+
+    -- If candidate was approved in Section 1 (R1 or R2), ensure they exist in S2 R1
+    IF p_section = 1 AND p_status = 'approved' THEN
+        BEGIN
+            INSERT INTO public."voting-s2-r1" (id, positive, negative, abstain, status, is_overridden)
+            VALUES (p_student_id, 0, 0, 0, 'in_contest', false)
+            ON CONFLICT (id) DO NOTHING;
+        EXCEPTION WHEN others THEN
+            NULL;
+        END;
+    END IF;
+END;
+$$;
+
+-- 11. Stored Procedure: switch_round
 CREATE OR REPLACE FUNCTION public.switch_round(p_section integer, p_round integer)
 RETURNS void
 LANGUAGE plpgsql
@@ -626,6 +712,19 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.toggle_invite_bid_list()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    UPDATE public."voting-ops"
+    SET invite_bid_list_shown = NOT COALESCE(invite_bid_list_shown, false),
+        updated_at = now()
+    WHERE id = 1;
+END;
+$$;
+
 -- 14. Stored Procedure: cast_vote
 CREATE OR REPLACE FUNCTION public.cast_vote(
     p_student_id text,
@@ -685,6 +784,7 @@ $$;
 -- Grant execution privileges on all stored procedures
 GRANT EXECUTE ON FUNCTION public.initialize_round_data(integer, integer) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.setup_section(integer, integer) TO authenticated, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.setup_section(integer, integer, integer) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.setup_voting_section(integer, integer) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.switch_round(integer, integer) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.start_round(integer, integer) TO authenticated, anon, service_role;
@@ -695,7 +795,9 @@ GRANT EXECUTE ON FUNCTION public.finish_voting_countdown(integer, integer) TO au
 GRANT EXECUTE ON FUNCTION public.close_voting() TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.select_candidate(text) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.toggle_app_committee() TO authenticated, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.toggle_invite_bid_list() TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.evaluate_round_thresholds(integer, integer) TO authenticated, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.override_candidate_status(integer, integer, text, text) TO authenticated, anon, service_role;
 GRANT EXECUTE ON FUNCTION public.cast_vote(text, uuid, integer, integer, text) TO authenticated, anon, service_role;
 
 -- 15. Realtime Publication Configuration

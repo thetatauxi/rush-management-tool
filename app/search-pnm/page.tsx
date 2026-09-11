@@ -66,7 +66,9 @@ export default function SearchPnmPage() {
   const [userFullName, setUserFullName] = useState("");
   const [userFirstName, setUserFirstName] = useState("");
   const [userRole, setUserRole] = useState("Member");
+  const [isAdmin, setIsAdmin] = useState(false);
   const [isRushChair, setIsRushChair] = useState(false);
+  const [isRushCommittee, setIsRushCommittee] = useState(false);
   const [hasViewFeedbackPrivilege, setHasViewFeedbackPrivilege] = useState(false);
   const [appCommitteeEnabled, setAppCommitteeEnabled] = useState(false);
 
@@ -118,16 +120,20 @@ export default function SearchPnmPage() {
             .maybeSingle();
 
           if (profile) {
-            const role = profile.role?.toLowerCase() || "";
-            const isOfficer =
-              role === "rush chair" ||
+            const role = (profile.role || "").toLowerCase().trim();
+            const isAdminRole =
               role === "regent" ||
               role === "vice regent" ||
               role === "vr" ||
+              role === "website chair" ||
               role === "admin";
+            const isRushChairRole = role === "rush chair";
+            const isRushCommitteeRole = role === "rush committee";
 
-            setIsRushChair(isOfficer);
-            setHasViewFeedbackPrivilege(isOfficer);
+            setIsAdmin(isAdminRole);
+            setIsRushChair(isRushChairRole);
+            setIsRushCommittee(isRushCommitteeRole);
+            setHasViewFeedbackPrivilege(isAdminRole || isRushChairRole);
 
             const first = profile.first_name || "";
             const last = profile.last_name || "";
@@ -548,10 +554,19 @@ export default function SearchPnmPage() {
     }
   };
 
-  const isRushCommitteeOnly = userRole.toLowerCase() === "rush committee" && !isRushChair;
-  const canEdit = isRushChair || (userRole.toLowerCase() === "rush committee" && appCommitteeEnabled);
+  const normalizedUserRole = userRole.toLowerCase().trim();
+  const isStrictAdmin =
+    isAdmin ||
+    normalizedUserRole === "regent" ||
+    normalizedUserRole === "vice regent" ||
+    normalizedUserRole === "vr" ||
+    normalizedUserRole === "website chair" ||
+    normalizedUserRole === "admin";
 
-  const canSplitSearch = isRushChair;
+  const isRushCommitteeOnly = (isRushCommittee || normalizedUserRole === "rush committee") && !isStrictAdmin && !isRushChair && normalizedUserRole !== "rush chair";
+  const canEdit = isStrictAdmin || isRushChair || normalizedUserRole === "rush chair" || ((isRushCommittee || normalizedUserRole === "rush committee") && appCommitteeEnabled);
+
+  const canSplitSearch = isStrictAdmin || isRushChair || normalizedUserRole === "rush chair";
 
   if (checkingAuth) {
     return (
@@ -708,16 +723,17 @@ export default function SearchPnmPage() {
                 className="group bg-white rounded-xl border border-zinc-200/90 shadow-xs hover:shadow-xl hover:border-red-400/80 transition-all duration-200 flex flex-col overflow-hidden cursor-pointer hover:-translate-y-1 select-none"
               >
                 {/* PNM Headshot */}
-                <div className="relative aspect-[3/4] w-full bg-zinc-100 flex items-center justify-center overflow-hidden border-b border-zinc-200/80">
+                <div className="relative aspect-[3/4] w-full bg-zinc-100 flex items-center justify-center overflow-hidden border-b border-zinc-200/80" title={pnm.full_name}>
                   {pnm.headshot_url ? (
                     <img
                       src={pnm.headshot_url}
                       alt={`${pnm.full_name} Headshot`}
+                      title={pnm.full_name}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       loading="lazy"
                     />
                   ) : (
-                    <div className="flex flex-col items-center justify-center text-zinc-300 group-hover:text-zinc-400 transition-colors">
+                    <div className="flex flex-col items-center justify-center text-zinc-300 group-hover:text-zinc-400 transition-colors" title={pnm.full_name}>
                       <svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path
                           strokeLinecap="round"
@@ -817,17 +833,18 @@ export default function SearchPnmPage() {
                         className="w-full text-2xl font-bold border border-zinc-300 rounded px-2 py-1 bg-white text-zinc-900 focus:outline-none focus:ring-2 focus:ring-red-700"
                       />
                     ) : (
-                      <h2 className="text-3xl font-bold tracking-tight text-zinc-950 truncate">
+                      <h2 className="text-3xl font-bold tracking-tight text-zinc-950 truncate" title={selectedPnmForDetails.full_name}>
                         {selectedPnmForDetails.full_name}
                       </h2>
                     )}
                   </div>
 
-                  <div className="relative aspect-[3/4] w-full bg-zinc-100 rounded-lg border border-zinc-300 overflow-hidden flex items-center justify-center">
+                  <div className="relative aspect-[3/4] w-full bg-zinc-100 rounded-lg border border-zinc-300 overflow-hidden flex items-center justify-center" title={selectedPnmForDetails.full_name}>
                     {selectedPnmForDetails.headshot_url ? (
                       <img
                         src={selectedPnmForDetails.headshot_url}
                         alt={`${selectedPnmForDetails.full_name} Headshot`}
+                        title={selectedPnmForDetails.full_name}
                         className="w-full h-full object-cover"
                       />
                     ) : (
@@ -1355,7 +1372,7 @@ export default function SearchPnmPage() {
                 <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block">
                   Candidate Name
                 </span>
-                <p className="text-lg font-bold text-zinc-900 mt-0.5">
+                <p className="text-lg font-bold text-zinc-900 mt-0.5" title={selectedPnmForDetails?.full_name}>
                   {selectedPnmForDetails?.full_name}
                 </p>
               </div>
