@@ -71,6 +71,7 @@ export default function SearchPnmPage() {
   const [isRushCommittee, setIsRushCommittee] = useState(false);
   const [hasViewFeedbackPrivilege, setHasViewFeedbackPrivilege] = useState(false);
   const [appCommitteeEnabled, setAppCommitteeEnabled] = useState(false);
+  const [pendingFeedbackPnmIds, setPendingFeedbackPnmIds] = useState<Set<string>>(new Set());
 
   // Split Search for Rush Committee States
   const [showSplitModal, setShowSplitModal] = useState(false);
@@ -226,6 +227,44 @@ export default function SearchPnmPage() {
     fetchData();
   }, [checkingAuth]);
 
+  // Load and refresh pending feedback IDs (for rush chairs and admin)
+  const fetchPendingFeedback = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("pnm_feedback")
+        .select("student_id")
+        .eq("is_approved", 0);
+
+      if (!error && data) {
+        const idSet = new Set<string>(data.map((f: { student_id: string }) => f.student_id));
+        setPendingFeedbackPnmIds(idSet);
+      }
+    } catch (err) {
+      console.error("Error loading pending feedback:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (checkingAuth || !hasViewFeedbackPrivilege) return;
+
+    fetchPendingFeedback();
+
+    const channel = supabase
+      .channel("pnm-feedback-changes-search")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "pnm_feedback" },
+        () => {
+          fetchPendingFeedback();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [checkingAuth, hasViewFeedbackPrivilege]);
+
   // Check if current search query matches a review split hex code
   const activeSplitMatch = useMemo(() => {
     const raw = searchQuery.trim();
@@ -252,6 +291,31 @@ export default function SearchPnmPage() {
     const raw = searchQuery.trim();
     if (!raw) {
       return [...pnms].sort((a, b) => a.full_name.localeCompare(b.full_name));
+    }
+
+    // Unread feedback '*' search for rush chairs and admin
+    if (raw === "*" || raw.startsWith("*")) {
+      const rest = raw.replace(/^\*/, "").trim().toLowerCase();
+      return pnms
+        .filter((pnm) => {
+          if (hasViewFeedbackPrivilege && !pendingFeedbackPnmIds.has(pnm.student_id)) {
+            return false;
+          }
+          if (!rest) return true;
+          const searchableFields = [
+            pnm.full_name,
+            pnm.email,
+            pnm.student_id,
+            pnm.major || "",
+            pnm.year || "",
+            pnm.interviewer_names || "",
+            pnm.review_code || "",
+          ]
+            .join(" ")
+            .toLowerCase();
+          return searchableFields.includes(rest);
+        })
+        .sort((a, b) => a.full_name.localeCompare(b.full_name));
     }
 
     const clean = raw.replace(/^#/, "").toUpperCase();
@@ -286,7 +350,7 @@ export default function SearchPnmPage() {
     });
 
     return list.sort((a, b) => a.full_name.localeCompare(b.full_name));
-  }, [pnms, searchQuery]);
+  }, [pnms, searchQuery, pendingFeedbackPnmIds, hasViewFeedbackPrivilege]);
 
   // Handle generating equal and random PNM review splits
   const handleGenerateSplits = async () => {
@@ -465,11 +529,44 @@ export default function SearchPnmPage() {
       setFeedbackList((prev) =>
         prev.map((fb) => (fb.id === feedbackId ? { ...fb, is_approved: newValue } : fb))
       );
+      fetchPendingFeedback();
     } catch (err) {
       console.error("Error toggling approval status:", err);
       toast.error("Failed to update status.");
     }
   };
+
+  const handleDeleteFeedback = async (feedbackId: number) => {
+    if (!confirm("Are you sure you want to delete this feedback?")) {
+      return;
+    }
+    try {
+      const { error } = await supabase
+        .from("pnm_feedback")
+        .delete()
+        .eq("id", feedbackId);
+
+      if (error) throw error;
+
+      setFeedbackList((prev) => prev.filter((fb) => fb.id !== feedbackId));
+      toast.success("Feedback deleted successfully.");
+      fetchPendingFeedback();
+    } catch (err) {
+      console.error("Error deleting feedback:", err);
+      toast.error("Failed to delete feedback.");
+    }
+  };
+
+  // Filter feedback for drawer: full list for rush chairs/admins, own feedback only for regular members
+  const visibleFeedbackList = useMemo(() => {
+    if (hasViewFeedbackPrivilege) {
+      return feedbackList;
+    }
+    const currentName = userFullName.trim().toLowerCase();
+    return feedbackList.filter(
+      (fb) => fb.submitter_name && fb.submitter_name.trim().toLowerCase() === currentName
+    );
+  }, [feedbackList, hasViewFeedbackPrivilege, userFullName]);
 
   const handleSubmitFeedback = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -500,6 +597,7 @@ export default function SearchPnmPage() {
       setNewFeedbackType("Positive");
 
       fetchFeedbackList(selectedPnmForDetails.student_id);
+      fetchPendingFeedback();
     } catch (err) {
       console.error("Error submitting feedback:", err);
       toast.error("Failed to submit feedback.");
@@ -619,7 +717,7 @@ export default function SearchPnmPage() {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search by name, email, student ID, major, year, or paste reviewer hex code..."
+              placeholder="Search by name, email, student ID, major, reviewer code, or '*' for unread feedback..."
               className="w-full pl-10 pr-10 py-3 bg-zinc-50 border border-zinc-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-700 text-zinc-900 placeholder-zinc-400 text-sm font-medium shadow-inner transition-all"
             />
             {searchQuery && (
@@ -700,9 +798,15 @@ export default function SearchPnmPage() {
                 />
               </svg>
             </div>
-            <h3 className="text-lg font-bold text-zinc-800">No candidates match your search</h3>
+            <h3 className="text-lg font-bold text-zinc-800">
+              {searchQuery.trim() === "*" || searchQuery.trim().startsWith("*")
+                ? "No candidates with unread feedback found"
+                : "No candidates match your search"}
+            </h3>
             <p className="text-sm text-zinc-500 mt-1">
-              Try searching with a different name, email, student ID, major, or clear the search query.
+              {searchQuery.trim() === "*" || searchQuery.trim().startsWith("*")
+                ? "All submitted feedback has been approved or declined."
+                : "Try searching with a different name, email, student ID, major, or clear the search query."}
             </p>
             {searchQuery && (
               <button
@@ -756,12 +860,20 @@ export default function SearchPnmPage() {
                 {/* PNM Details Below Headshot */}
                 <div className="p-3 flex flex-col justify-between flex-1 bg-white">
                   <div>
-                    <h3
-                      className="font-bold text-sm text-zinc-950 truncate leading-tight group-hover:text-red-700 transition-colors"
-                      title={pnm.full_name}
-                    >
-                      {pnm.full_name}
-                    </h3>
+                    <div className="flex items-center justify-between gap-1.5">
+                      <h3
+                        className="font-bold text-sm text-zinc-950 truncate leading-tight group-hover:text-red-700 transition-colors flex-1 min-w-0"
+                        title={pnm.full_name}
+                      >
+                        {pnm.full_name}
+                      </h3>
+                      {hasViewFeedbackPrivilege && pendingFeedbackPnmIds.has(pnm.student_id) && (
+                        <span
+                          className="w-2.5 h-2.5 rounded-full bg-purple-600 ring-2 ring-purple-200 flex-shrink-0"
+                          title="Pending unread feedback waiting for approval"
+                        />
+                      )}
+                    </div>
                     <p
                       className="text-zinc-500 text-xs font-medium truncate mt-0.5"
                       title={`${pnm.major || "Undeclared"} — ${pnm.year || "N/A"}`}
@@ -1010,28 +1122,31 @@ export default function SearchPnmPage() {
                 </div>
 
                 {/* Middle Column: Feedback Notes & Application Comments */}
-                <div className="md:col-span-2 border-r border-zinc-200 px-6 flex flex-col justify-between gap-6">
-                  <div className="flex-1 flex flex-col min-h-0">
-                    <div className="flex justify-between items-center mb-3 border-b border-zinc-100 pb-1 flex-shrink-0">
-                      <h4 className="text-lg font-bold text-zinc-800">Feedback Notes</h4>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setIsSubmittingFeedback(true)}
-                          className="px-2.5 py-1 bg-red-700 hover:bg-red-800 text-white rounded text-xs font-semibold shadow-sm transition-all cursor-pointer"
-                        >
-                          Submit Feedback
-                        </button>
-                        {hasViewFeedbackPrivilege && (
-                          <button
-                            onClick={() => setIsViewingFeedback(!isViewingFeedback)}
-                            className={`px-2.5 py-1 text-white rounded text-xs font-semibold shadow-sm transition-all cursor-pointer ${isViewingFeedback ? "bg-zinc-800 hover:bg-zinc-900" : "bg-zinc-700 hover:bg-zinc-800"
-                              }`}
-                          >
-                            {isViewingFeedback ? "Hide Feedback" : "View Feedback"}
-                          </button>
-                        )}
-                      </div>
+                <div className="md:col-span-2 border-r border-zinc-200 px-6 flex flex-col min-h-0">
+                  <div className="flex justify-between items-center mb-3 border-b border-zinc-100 pb-1 flex-shrink-0">
+                    <h4 className="text-lg font-bold text-zinc-800">Feedback Notes</h4>
+                    <div className="flex items-center gap-2">
+                      {hasViewFeedbackPrivilege && pendingFeedbackPnmIds.has(selectedPnmForDetails.student_id) && (
+                        <div className="flex items-center gap-1.5 bg-purple-50 text-purple-700 border border-purple-200 px-2.5 py-1 rounded-full text-xs font-bold flex-shrink-0 shadow-2xs">
+                          <span className="w-2 h-2 rounded-full bg-purple-600 animate-pulse" />
+                          <span>Unread Feedback</span>
+                        </div>
+                      )}
+                      <button
+                        onClick={() => setIsSubmittingFeedback(true)}
+                        className="px-2.5 py-1 bg-red-700 hover:bg-red-800 text-white rounded text-xs font-semibold shadow-sm transition-all cursor-pointer"
+                      >
+                        Submit Feedback
+                      </button>
+                      <button
+                        onClick={() => setIsViewingFeedback(!isViewingFeedback)}
+                        className={`px-2.5 py-1 text-white rounded text-xs font-semibold shadow-sm transition-all cursor-pointer ${isViewingFeedback ? "bg-zinc-800 hover:bg-zinc-900" : "bg-zinc-700 hover:bg-zinc-800"
+                          }`}
+                      >
+                        {isViewingFeedback ? "Hide Feedback" : "View Feedback"}
+                      </button>
                     </div>
+                  </div>
 
                     <div className="flex-1 overflow-y-auto space-y-4 pr-2">
                       {/* Positive */}
@@ -1141,32 +1256,32 @@ export default function SearchPnmPage() {
                             </div>
                           ))}
                       </div>
+
+                      {/* Application Comment (Placed directly below feedback, moves dynamically) */}
+                      <div className="border-t border-zinc-200 pt-4">
+                        <h4 className="text-lg font-bold text-zinc-800 mb-2">
+                          Application Comment: <span className="text-sm text-zinc-400 font-normal">(Best 3 Things)</span>
+                        </h4>
+                        {isEditing ? (
+                          <textarea
+                            value={editedValues.application_comments || ""}
+                            onChange={(e) =>
+                              setEditedValues({
+                                ...editedValues,
+                                application_comments: e.target.value,
+                              })
+                            }
+                            className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-20 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                            placeholder="- Detail 1&#10;- Detail 2&#10;- Detail 3"
+                          />
+                        ) : (
+                          <p className="text-sm text-zinc-700 whitespace-pre-line leading-relaxed">
+                            {selectedPnmForDetails.application_comments || "No comments entered."}
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
-
-                  <div className="border-t border-zinc-200 pt-4">
-                    <h4 className="text-lg font-bold text-zinc-800 mb-2">
-                      Application Comment: <span className="text-sm text-zinc-400 font-normal">(Best 3 Things)</span>
-                    </h4>
-                    {isEditing ? (
-                      <textarea
-                        value={editedValues.application_comments || ""}
-                        onChange={(e) =>
-                          setEditedValues({
-                            ...editedValues,
-                            application_comments: e.target.value,
-                          })
-                        }
-                        className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-20 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                        placeholder="- Detail 1&#10;- Detail 2&#10;- Detail 3"
-                      />
-                    ) : (
-                      <p className="text-sm text-zinc-700 whitespace-pre-line leading-relaxed">
-                        {selectedPnmForDetails.application_comments || "No comments entered."}
-                      </p>
-                    )}
-                  </div>
-                </div>
 
                 {/* Right Column: Interviewers and Interview Notes */}
                 <div className="md:col-span-1 pl-6 flex flex-col gap-4">
@@ -1267,12 +1382,14 @@ export default function SearchPnmPage() {
       )}
 
       {/* ========================================================================= */}
-      {/* FEEDBACK FEED DRAWER (FOR OFFICERS)                                       */}
+      {/* FEEDBACK FEED DRAWER (FOR OFFICERS & MEMBERS)                             */}
       {/* ========================================================================= */}
       {isViewingFeedback && (
         <div className="fixed inset-y-0 right-0 z-50 w-80 md:w-96 bg-white shadow-2xl border-l border-zinc-200 flex flex-col animate-in slide-in-from-right duration-300 text-zinc-950">
           <div className="px-6 py-4 bg-zinc-900 text-white flex justify-between items-center flex-shrink-0">
-            <h3 className="text-md font-mono font-bold tracking-wide">FEEDBACK FEED</h3>
+            <h3 className="text-md font-mono font-bold tracking-wide">
+              {hasViewFeedbackPrivilege ? "FEEDBACK FEED" : "YOUR SUBMITTED FEEDBACK"}
+            </h3>
             <button
               onClick={() => setIsViewingFeedback(false)}
               className="text-zinc-400 hover:text-white font-bold text-xl transition-colors leading-none cursor-pointer"
@@ -1282,12 +1399,16 @@ export default function SearchPnmPage() {
           </div>
 
           <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 min-h-0">
-            {feedbackList.length === 0 ? (
-              <div className="text-center py-10 text-zinc-400 font-medium">No feedback submitted yet.</div>
+            {visibleFeedbackList.length === 0 ? (
+              <div className="text-center py-10 text-zinc-400 font-medium text-sm">
+                {hasViewFeedbackPrivilege
+                  ? "No feedback submitted yet."
+                  : "You haven't submitted any feedback for this candidate yet."}
+              </div>
             ) : (
-              feedbackList.map((fb) => (
+              visibleFeedbackList.map((fb) => (
                 <div key={fb.id} className="border-b border-zinc-100 pb-3 last:border-b-0 flex flex-col gap-1.5">
-                  <div className="flex justify-between items-center">
+                  <div className="flex justify-between items-center gap-2">
                     <span
                       className={`px-2 py-0.5 rounded text-xs font-bold text-white uppercase tracking-wider ${fb.feedback_type === "Positive"
                         ? "bg-green-600"
@@ -1300,26 +1421,53 @@ export default function SearchPnmPage() {
                     >
                       {fb.feedback_type}
                     </span>
-                    <div className="flex items-center gap-3">
-                      <label className="flex items-center gap-1 cursor-pointer text-[11px] text-zinc-500 hover:text-green-700 select-none">
-                        <input
-                          type="checkbox"
-                          checked={fb.is_approved === 1}
-                          onChange={() => handleToggleApproval(fb.id, fb.is_approved, 1)}
-                          className="rounded border-zinc-300 text-green-600 focus:ring-green-500 h-3.5 w-3.5 cursor-pointer"
-                        />
-                        <span className={fb.is_approved === 1 ? "text-green-700 font-semibold" : ""}>Approve</span>
-                      </label>
-                      <label className="flex items-center gap-1 cursor-pointer text-[11px] text-zinc-500 hover:text-red-700 select-none">
-                        <input
-                          type="checkbox"
-                          checked={fb.is_approved === -1}
-                          onChange={() => handleToggleApproval(fb.id, fb.is_approved, -1)}
-                          className="rounded border-zinc-300 text-red-600 focus:ring-red-500 h-3.5 w-3.5 cursor-pointer"
-                        />
-                        <span className={fb.is_approved === -1 ? "text-red-700 font-semibold" : ""}>Decline</span>
-                      </label>
-                    </div>
+                    {hasViewFeedbackPrivilege ? (
+                      <div className="flex items-center gap-3">
+                        <label className="flex items-center gap-1 cursor-pointer text-[11px] text-zinc-500 hover:text-green-700 select-none">
+                          <input
+                            type="checkbox"
+                            checked={fb.is_approved === 1}
+                            onChange={() => handleToggleApproval(fb.id, fb.is_approved, 1)}
+                            className="rounded border-zinc-300 text-green-600 focus:ring-green-500 h-3.5 w-3.5 cursor-pointer"
+                          />
+                          <span className={fb.is_approved === 1 ? "text-green-700 font-semibold" : ""}>Approve</span>
+                        </label>
+                        <label className="flex items-center gap-1 cursor-pointer text-[11px] text-zinc-500 hover:text-red-700 select-none">
+                          <input
+                            type="checkbox"
+                            checked={fb.is_approved === -1}
+                            onChange={() => handleToggleApproval(fb.id, fb.is_approved, -1)}
+                            className="rounded border-zinc-300 text-red-600 focus:ring-red-500 h-3.5 w-3.5 cursor-pointer"
+                          />
+                          <span className={fb.is_approved === -1 ? "text-red-700 font-semibold" : ""}>Decline</span>
+                        </label>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
+                            fb.is_approved === 1
+                              ? "bg-green-100 text-green-700 border border-green-200"
+                              : fb.is_approved === -1
+                              ? "bg-red-100 text-red-700 border border-red-200"
+                              : "bg-amber-100 text-amber-700 border border-amber-200"
+                          }`}
+                        >
+                          {fb.is_approved === 1 ? "Approved" : fb.is_approved === -1 ? "Declined" : "Pending"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteFeedback(fb.id)}
+                          className="px-2 py-1 text-xs font-semibold text-red-600 hover:text-white border border-red-200 hover:border-red-600 hover:bg-red-600 rounded transition-colors flex items-center gap-1 cursor-pointer"
+                          title="Delete your feedback"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                          <span>Delete</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <span className="text-xs font-semibold text-zinc-400">
                     Submitted by {fb.submitter_name}
