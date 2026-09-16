@@ -12,6 +12,7 @@ type PNM = {
   full_name: string;
   email: string;
   headshot_url: string | null;
+  application?: boolean;
   event_1: boolean;
   event_2: boolean;
   event_3: boolean;
@@ -310,6 +311,7 @@ export default function SearchPnmPage() {
             pnm.year || "",
             pnm.interviewer_names || "",
             pnm.review_code || "",
+            pnm.application === false ? "no application no app" : "application applied",
           ]
             .join(" ")
             .toLowerCase();
@@ -342,6 +344,7 @@ export default function SearchPnmPage() {
         pnm.year || "",
         pnm.interviewer_names || "",
         pnm.review_code || "",
+        pnm.application === false ? "no application no app" : "application applied",
       ]
         .join(" ")
         .toLowerCase();
@@ -605,7 +608,7 @@ export default function SearchPnmPage() {
   };
 
   const startEditing = (pnm: PNM) => {
-    setEditedValues({ ...pnm });
+    setEditedValues({ ...pnm, application: pnm.application !== false });
     setIsEditing(true);
   };
 
@@ -632,6 +635,7 @@ export default function SearchPnmPage() {
           event_4: editedValues.event_4,
           event_5: editedValues.event_5,
           event_6: editedValues.event_6,
+          application: editedValues.application !== undefined ? editedValues.application : (targetPnm.application !== false),
         };
 
       const { error } = await supabase
@@ -824,8 +828,17 @@ export default function SearchPnmPage() {
               <div
                 key={pnm.student_id}
                 onClick={() => handleOpenDetails(pnm)}
-                className="group bg-white rounded-xl border border-zinc-200/90 shadow-xs hover:shadow-xl hover:border-red-400/80 transition-all duration-200 flex flex-col overflow-hidden cursor-pointer hover:-translate-y-1 select-none"
+                className={`group bg-white rounded-xl border transition-all duration-200 flex flex-col overflow-hidden cursor-pointer hover:-translate-y-1 select-none relative ${
+                  pnm.application === false
+                    ? "border-red-400/80 ring-1 ring-red-300/70 shadow-xs hover:shadow-xl hover:border-red-600"
+                    : "border-zinc-200/90 shadow-xs hover:shadow-xl hover:border-red-400/80"
+                }`}
               >
+                {/* Red Tint Overlay over whole profile card */}
+                {pnm.application === false && (
+                  <div className="absolute inset-0 bg-red-600/15 pointer-events-none z-10 rounded-xl" />
+                )}
+
                 {/* PNM Headshot */}
                 <div className="relative aspect-[3/4] w-full bg-zinc-100 flex items-center justify-center overflow-hidden border-b border-zinc-200/80" title={pnm.full_name}>
                   {pnm.headshot_url ? (
@@ -849,8 +862,20 @@ export default function SearchPnmPage() {
                     </div>
                   )}
 
+                  {/* Red Tint Overlay on Photo */}
+                  {pnm.application === false && (
+                    <div className="absolute inset-0 bg-red-600/20 pointer-events-none z-5" />
+                  )}
+
+                  {/* "No Application" text box at bottom of photo and above info box (inside aspect-[3/4] so card size is unchanged) */}
+                  {pnm.application === false && (
+                    <div className="absolute bottom-0 inset-x-0 bg-red-700/95 text-white text-[9.5px] font-extrabold py-0.5 px-1 text-center uppercase tracking-wider z-20 border-t border-red-800/80 shadow-xs">
+                      No Application
+                    </div>
+                  )}
+
                   {/* Hover Overlay Prompt */}
-                  <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
+                  <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center z-25">
                     <span className="bg-white/90 text-zinc-900 text-xs font-bold px-3 py-1.5 rounded-full shadow-md backdrop-blur-xs">
                       View Details
                     </span>
@@ -968,6 +993,16 @@ export default function SearchPnmPage() {
                           d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
                         />
                       </svg>
+                    )}
+
+                    {/* Red Tint & No Application badge on modal headshot if application === false */}
+                    {selectedPnmForDetails.application === false && (
+                      <>
+                        <div className="absolute inset-0 bg-red-600/20 pointer-events-none" />
+                        <div className="absolute bottom-0 inset-x-0 bg-red-700/95 text-white text-[10px] font-extrabold py-0.5 text-center uppercase tracking-wider shadow-xs">
+                          No Application
+                        </div>
+                      </>
                     )}
                   </div>
 
@@ -1095,6 +1130,73 @@ export default function SearchPnmPage() {
                         )}
                       </div>
                     </div>
+                  </div>
+
+                  {/* Application Status Badge / Control (Below Event Attendance & Absence Form Box) */}
+                  <div className="flex flex-col gap-1.5 p-3 bg-zinc-50 rounded-lg border border-zinc-200">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                        Application Status
+                      </span>
+                      {isEditing && !isRushCommitteeOnly && (
+                        <span className="text-[9px] text-zinc-400 font-semibold italic">Click toggle to change</span>
+                      )}
+                    </div>
+
+                    {isEditing && !isRushCommitteeOnly ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setEditedValues((prev) => ({
+                            ...prev,
+                            application: prev.application !== undefined ? !prev.application : false,
+                          }))
+                        }
+                        className={`w-full py-2 px-3 rounded-md border text-xs font-bold transition-all flex items-center justify-between cursor-pointer select-none ${
+                          editedValues.application !== false
+                            ? "bg-green-50 border-green-300 text-green-800 hover:bg-green-100 shadow-2xs"
+                            : "bg-red-50 border-red-300 text-red-800 hover:bg-red-100 shadow-2xs"
+                        }`}
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              editedValues.application !== false ? "bg-green-500" : "bg-red-500"
+                            }`}
+                          />
+                          {editedValues.application !== false ? "TRUE (Submitted)" : "FALSE (No Application)"}
+                        </span>
+                        <span className="text-[10px] uppercase font-mono tracking-wider bg-white px-1.5 py-0.5 rounded border border-current/20">
+                          Toggle
+                        </span>
+                      </button>
+                    ) : (
+                      <div
+                        className={`py-2 px-3 rounded-md border text-xs font-semibold flex items-center justify-between ${
+                          selectedPnmForDetails.application !== false
+                            ? "bg-green-50/80 border-green-200 text-green-800"
+                            : "bg-red-50/80 border-red-200 text-red-800"
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span
+                            className={`w-2.5 h-2.5 rounded-full ${
+                              selectedPnmForDetails.application !== false
+                                ? "bg-green-500 ring-2 ring-green-200"
+                                : "bg-red-500 ring-2 ring-red-200"
+                            }`}
+                          />
+                          <span>
+                            {selectedPnmForDetails.application !== false ? "Application Submitted" : "No Application (FALSE)"}
+                          </span>
+                        </span>
+                        {selectedPnmForDetails.application === false && (
+                          <span className="text-[10px] font-bold text-red-600 uppercase tracking-wider">
+                            Excluded from Voting
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div className="bg-zinc-50 p-2.5 rounded-lg border border-zinc-200 flex items-center justify-between text-[11px] text-zinc-600 gap-2">

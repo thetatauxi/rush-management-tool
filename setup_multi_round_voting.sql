@@ -341,6 +341,7 @@ BEGIN
             INSERT INTO public."voting-s1-r1" (id, positive, negative, abstain, status)
             SELECT student_id, 0, 0, 0, 'in_contest'
             FROM public.pnms
+            WHERE application IS TRUE
             ON CONFLICT (id) DO NOTHING;
 
         ELSIF p_round = 2 THEN
@@ -553,9 +554,11 @@ BEGIN
     v_table := 'voting-s' || p_section || '-r' || p_round;
 
     EXECUTE format('
-        SELECT array_agg(id ORDER BY random())
-        FROM public.%I
-        WHERE status = ''in_contest''',
+        SELECT array_agg(t.id ORDER BY random())
+        FROM public.%I t
+        JOIN public.pnms p ON p.student_id = t.id
+        WHERE t.status = ''in_contest''
+          AND p.application IS TRUE',
         v_table
     ) INTO v_pnm_order;
 
@@ -742,7 +745,12 @@ DECLARE
     v_pos integer;
     v_neg integer;
     v_abs integer;
+    v_app boolean;
 BEGIN
+    SELECT application INTO v_app FROM public.pnms WHERE student_id = p_student_id;
+    IF v_app IS NOT TRUE THEN
+        RAISE EXCEPTION 'Candidate % has not submitted an application and is not eligible for voting.', p_student_id;
+    END IF;
     IF p_vote_choice IS NULL THEN
         DELETE FROM public.member_votes
         WHERE user_id = p_user_id

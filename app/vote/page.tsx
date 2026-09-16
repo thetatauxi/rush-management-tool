@@ -12,6 +12,7 @@ type PNM = {
   full_name: string;
   email: string;
   headshot_url: string | null;
+  application?: boolean;
   event_1: boolean;
   event_2: boolean;
   event_3: boolean;
@@ -243,7 +244,9 @@ export default function VoteDashboard() {
           .order("full_name", { ascending: true });
 
         if (error) throw error;
-        setPnms(data || []);
+        // Candidates with application === false should not appear in any voting at all
+        const eligiblePnms = ((data || []) as PNM[]).filter((p) => p.application !== false);
+        setPnms(eligiblePnms);
       } catch (err) {
         console.error("Error loading data:", err);
         toast.error("Failed to load dashboard data.");
@@ -702,7 +705,7 @@ export default function VoteDashboard() {
   // For any round after S1 R1, only candidates who advanced to this round appear for voting.
   const filteredPnms = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    let list = pnms;
+    let list = pnms.filter((p) => p.application !== false);
 
     if (votingSection > 1 || votingRound > 1) {
       list = list.filter((p) => Boolean(roundCounts[p.student_id]));

@@ -40,6 +40,7 @@ export default function Ingest() {
   const [year, setYear] = useState("Freshman");
   const [eventType, setEventType] = useState(EVENT_HEADERS[0]);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [hasApplication, setHasApplication] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   // Check Supabase authentication
@@ -186,6 +187,7 @@ export default function Ingest() {
         event_6: eventIndex === 5,
         major: major,
         year: year,
+        application: hasApplication,
       };
 
       // 5. Insert Record to public.pnms table in Supabase
@@ -210,6 +212,7 @@ export default function Ingest() {
       setStudentId("");
       setMajor("");
       setYear("Freshman");
+      setHasApplication(false);
       setPhotoFile(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -343,6 +346,24 @@ export default function Ingest() {
             <p className="text-sm text-gray-500">
               This will mark the PNM as present for the selected event.
             </p>
+          </div>
+
+          <div className="flex items-center justify-between p-3.5 bg-white border border-gray-300 rounded-md shadow-2xs">
+            <div>
+              <label htmlFor="hasApplication" className="text-base font-semibold text-gray-900 block cursor-pointer">
+                Application Submitted?
+              </label>
+              <p className="text-xs text-gray-500">
+                If unchecked (FALSE), candidate receives a red tint in search and will not appear in voting.
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              id="hasApplication"
+              checked={hasApplication}
+              onChange={(e) => setHasApplication(e.target.checked)}
+              className="w-5 h-5 text-red-700 rounded border-gray-300 focus:ring-red-700 cursor-pointer accent-red-700"
+            />
           </div>
 
           <div className="flex flex-col gap-2">
