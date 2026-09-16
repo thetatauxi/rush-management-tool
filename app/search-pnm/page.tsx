@@ -266,6 +266,28 @@ export default function SearchPnmPage() {
     };
   }, [checkingAuth, hasViewFeedbackPrivilege]);
 
+  // Real-time listener for voting-ops (app_committee_enabled live state)
+  useEffect(() => {
+    if (checkingAuth) return;
+
+    const opsChannel = supabase
+      .channel("voting-ops-search-app-com")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "voting-ops" },
+        (payload) => {
+          if (payload.new && "app_committee_enabled" in payload.new) {
+            setAppCommitteeEnabled(!!(payload.new as { app_committee_enabled?: boolean }).app_committee_enabled);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(opsChannel);
+    };
+  }, [checkingAuth]);
+
   // Check if current search query matches a review split hex code
   const activeSplitMatch = useMemo(() => {
     const raw = searchQuery.trim();
@@ -615,7 +637,12 @@ export default function SearchPnmPage() {
   const handleSaveChanges = async (targetPnm: PNM) => {
     try {
       const updatePayload = isRushCommitteeOnly
-        ? { application_comments: editedValues.application_comments }
+        ? {
+          application_comments: editedValues.application_comments,
+          ...(appCommitteeEnabled && {
+            application: editedValues.application !== undefined ? editedValues.application : (targetPnm.application !== false),
+          }),
+        }
         : {
           full_name: editedValues.full_name,
           major: editedValues.major,
@@ -667,6 +694,7 @@ export default function SearchPnmPage() {
 
   const isRushCommitteeOnly = (isRushCommittee || normalizedUserRole === "rush committee") && !isStrictAdmin && !isRushChair && normalizedUserRole !== "rush chair";
   const canEdit = isStrictAdmin || isRushChair || normalizedUserRole === "rush chair" || ((isRushCommittee || normalizedUserRole === "rush committee") && appCommitteeEnabled);
+  const canEditApplication = isStrictAdmin || isRushChair || normalizedUserRole === "rush chair" || ((isRushCommittee || normalizedUserRole === "rush committee") && appCommitteeEnabled);
 
   const canSplitSearch = isStrictAdmin || isRushChair || normalizedUserRole === "rush chair";
 
@@ -828,11 +856,10 @@ export default function SearchPnmPage() {
               <div
                 key={pnm.student_id}
                 onClick={() => handleOpenDetails(pnm)}
-                className={`group bg-white rounded-xl border transition-all duration-200 flex flex-col overflow-hidden cursor-pointer hover:-translate-y-1 select-none relative ${
-                  pnm.application === false
+                className={`group bg-white rounded-xl border transition-all duration-200 flex flex-col overflow-hidden cursor-pointer hover:-translate-y-1 select-none relative ${pnm.application === false
                     ? "border-red-400/80 ring-1 ring-red-300/70 shadow-xs hover:shadow-xl hover:border-red-600"
                     : "border-zinc-200/90 shadow-xs hover:shadow-xl hover:border-red-400/80"
-                }`}
+                  }`}
               >
                 {/* Red Tint Overlay over whole profile card */}
                 {pnm.application === false && (
@@ -1138,12 +1165,12 @@ export default function SearchPnmPage() {
                       <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
                         Application Status
                       </span>
-                      {isEditing && !isRushCommitteeOnly && (
+                      {isEditing && canEditApplication && (
                         <span className="text-[9px] text-zinc-400 font-semibold italic">Click toggle to change</span>
                       )}
                     </div>
 
-                    {isEditing && !isRushCommitteeOnly ? (
+                    {isEditing && canEditApplication ? (
                       <button
                         type="button"
                         onClick={() =>
@@ -1152,17 +1179,15 @@ export default function SearchPnmPage() {
                             application: prev.application !== undefined ? !prev.application : false,
                           }))
                         }
-                        className={`w-full py-2 px-3 rounded-md border text-xs font-bold transition-all flex items-center justify-between cursor-pointer select-none ${
-                          editedValues.application !== false
+                        className={`w-full py-2 px-3 rounded-md border text-xs font-bold transition-all flex items-center justify-between cursor-pointer select-none ${editedValues.application !== false
                             ? "bg-green-50 border-green-300 text-green-800 hover:bg-green-100 shadow-2xs"
                             : "bg-red-50 border-red-300 text-red-800 hover:bg-red-100 shadow-2xs"
-                        }`}
+                          }`}
                       >
                         <span className="flex items-center gap-1.5">
                           <span
-                            className={`w-2 h-2 rounded-full ${
-                              editedValues.application !== false ? "bg-green-500" : "bg-red-500"
-                            }`}
+                            className={`w-2 h-2 rounded-full ${editedValues.application !== false ? "bg-green-500" : "bg-red-500"
+                              }`}
                           />
                           {editedValues.application !== false ? "TRUE (Submitted)" : "FALSE (No Application)"}
                         </span>
@@ -1172,22 +1197,20 @@ export default function SearchPnmPage() {
                       </button>
                     ) : (
                       <div
-                        className={`py-2 px-3 rounded-md border text-xs font-semibold flex items-center justify-between ${
-                          selectedPnmForDetails.application !== false
+                        className={`py-2 px-3 rounded-md border text-xs font-semibold flex items-center justify-between ${selectedPnmForDetails.application !== false
                             ? "bg-green-50/80 border-green-200 text-green-800"
                             : "bg-red-50/80 border-red-200 text-red-800"
-                        }`}
+                          }`}
                       >
                         <span className="flex items-center gap-2">
                           <span
-                            className={`w-2.5 h-2.5 rounded-full ${
-                              selectedPnmForDetails.application !== false
+                            className={`w-2.5 h-2.5 rounded-full ${selectedPnmForDetails.application !== false
                                 ? "bg-green-500 ring-2 ring-green-200"
                                 : "bg-red-500 ring-2 ring-red-200"
-                            }`}
+                              }`}
                           />
                           <span>
-                            {selectedPnmForDetails.application !== false ? "Application Submitted" : "No Application (FALSE)"}
+                            {selectedPnmForDetails.application !== false ? "Application Submitted" : "No Application Submitted"}
                           </span>
                         </span>
                         {selectedPnmForDetails.application === false && (
@@ -1250,140 +1273,140 @@ export default function SearchPnmPage() {
                     </div>
                   </div>
 
-                    <div className="flex-1 overflow-y-auto space-y-4 pr-2">
-                      {/* Positive */}
-                      <div className="flex flex-col gap-1">
-                        <span className="text-xs font-semibold text-green-700 uppercase block">Positive Note</span>
-                        {isEditing && !isRushCommitteeOnly ? (
-                          <textarea
-                            value={editedValues.positive_note || ""}
-                            onChange={(e) => setEditedValues({ ...editedValues, positive_note: e.target.value })}
-                            className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-14 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                            placeholder="Positive comment..."
-                          />
-                        ) : (
-                          <p className="text-sm text-zinc-700 whitespace-pre-line leading-relaxed min-h-[1.5rem]">
-                            {selectedPnmForDetails.positive_note || "—"}
-                          </p>
-                        )}
-                        {feedbackList
-                          .filter((fb) => fb.feedback_type === "Positive" && fb.is_approved === 1)
-                          .map((fb) => (
-                            <div
-                              key={fb.id}
-                              className="text-xs text-zinc-600 bg-zinc-50 border-l-2 border-green-500 pl-2 py-1.5 mt-1 rounded-r leading-relaxed whitespace-pre-line shadow-xs"
-                            >
-                              {fb.comment}
-                            </div>
-                          ))}
-                      </div>
+                  <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+                    {/* Positive */}
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs font-semibold text-green-700 uppercase block">Positive Note</span>
+                      {isEditing && !isRushCommitteeOnly ? (
+                        <textarea
+                          value={editedValues.positive_note || ""}
+                          onChange={(e) => setEditedValues({ ...editedValues, positive_note: e.target.value })}
+                          className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-14 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                          placeholder="Positive comment..."
+                        />
+                      ) : (
+                        <p className="text-sm text-zinc-700 whitespace-pre-line leading-relaxed min-h-[1.5rem]">
+                          {selectedPnmForDetails.positive_note || "—"}
+                        </p>
+                      )}
+                      {feedbackList
+                        .filter((fb) => fb.feedback_type === "Positive" && fb.is_approved === 1)
+                        .map((fb) => (
+                          <div
+                            key={fb.id}
+                            className="text-xs text-zinc-600 bg-zinc-50 border-l-2 border-green-500 pl-2 py-1.5 mt-1 rounded-r leading-relaxed whitespace-pre-line shadow-xs"
+                          >
+                            {fb.comment}
+                          </div>
+                        ))}
+                    </div>
 
-                      {/* Negative */}
-                      <div className="flex flex-col gap-1">
-                        <span className="text-xs font-semibold text-red-700 uppercase block">Negative Note</span>
-                        {isEditing && !isRushCommitteeOnly ? (
-                          <textarea
-                            value={editedValues.negative_note || ""}
-                            onChange={(e) => setEditedValues({ ...editedValues, negative_note: e.target.value })}
-                            className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-14 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                            placeholder="Negative comment..."
-                          />
-                        ) : (
-                          <p className="text-sm text-zinc-700 whitespace-pre-line leading-relaxed min-h-[1.5rem]">
-                            {selectedPnmForDetails.negative_note || "—"}
-                          </p>
-                        )}
-                        {feedbackList
-                          .filter((fb) => fb.feedback_type === "Negative" && fb.is_approved === 1)
-                          .map((fb) => (
-                            <div
-                              key={fb.id}
-                              className="text-xs text-zinc-600 bg-zinc-50 border-l-2 border-red-500 pl-2 py-1.5 mt-1 rounded-r leading-relaxed whitespace-pre-line shadow-xs"
-                            >
-                              {fb.comment}
-                            </div>
-                          ))}
-                      </div>
+                    {/* Negative */}
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs font-semibold text-red-700 uppercase block">Negative Note</span>
+                      {isEditing && !isRushCommitteeOnly ? (
+                        <textarea
+                          value={editedValues.negative_note || ""}
+                          onChange={(e) => setEditedValues({ ...editedValues, negative_note: e.target.value })}
+                          className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-14 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                          placeholder="Negative comment..."
+                        />
+                      ) : (
+                        <p className="text-sm text-zinc-700 whitespace-pre-line leading-relaxed min-h-[1.5rem]">
+                          {selectedPnmForDetails.negative_note || "—"}
+                        </p>
+                      )}
+                      {feedbackList
+                        .filter((fb) => fb.feedback_type === "Negative" && fb.is_approved === 1)
+                        .map((fb) => (
+                          <div
+                            key={fb.id}
+                            className="text-xs text-zinc-600 bg-zinc-50 border-l-2 border-red-500 pl-2 py-1.5 mt-1 rounded-r leading-relaxed whitespace-pre-line shadow-xs"
+                          >
+                            {fb.comment}
+                          </div>
+                        ))}
+                    </div>
 
-                      {/* Other */}
-                      <div className="flex flex-col gap-1">
-                        <span className="text-xs font-semibold text-zinc-700 uppercase block">Other Note</span>
-                        {isEditing && !isRushCommitteeOnly ? (
-                          <textarea
-                            value={editedValues.other_note || ""}
-                            onChange={(e) => setEditedValues({ ...editedValues, other_note: e.target.value })}
-                            className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-14 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                            placeholder="Other comments..."
-                          />
-                        ) : (
-                          <p className="text-sm text-zinc-700 whitespace-pre-line leading-relaxed min-h-[1.5rem]">
-                            {selectedPnmForDetails.other_note || "—"}
-                          </p>
-                        )}
-                        {feedbackList
-                          .filter((fb) => fb.feedback_type === "Other" && fb.is_approved === 1)
-                          .map((fb) => (
-                            <div
-                              key={fb.id}
-                              className="text-xs text-zinc-600 bg-zinc-50 border-l-2 border-zinc-400 pl-2 py-1.5 mt-1 rounded-r leading-relaxed whitespace-pre-line shadow-xs"
-                            >
-                              {fb.comment}
-                            </div>
-                          ))}
-                      </div>
+                    {/* Other */}
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs font-semibold text-zinc-700 uppercase block">Other Note</span>
+                      {isEditing && !isRushCommitteeOnly ? (
+                        <textarea
+                          value={editedValues.other_note || ""}
+                          onChange={(e) => setEditedValues({ ...editedValues, other_note: e.target.value })}
+                          className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-14 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                          placeholder="Other comments..."
+                        />
+                      ) : (
+                        <p className="text-sm text-zinc-700 whitespace-pre-line leading-relaxed min-h-[1.5rem]">
+                          {selectedPnmForDetails.other_note || "—"}
+                        </p>
+                      )}
+                      {feedbackList
+                        .filter((fb) => fb.feedback_type === "Other" && fb.is_approved === 1)
+                        .map((fb) => (
+                          <div
+                            key={fb.id}
+                            className="text-xs text-zinc-600 bg-zinc-50 border-l-2 border-zinc-400 pl-2 py-1.5 mt-1 rounded-r leading-relaxed whitespace-pre-line shadow-xs"
+                          >
+                            {fb.comment}
+                          </div>
+                        ))}
+                    </div>
 
-                      {/* Veto */}
-                      <div className="flex flex-col gap-1">
-                        <span className="text-xs font-semibold text-purple-700 uppercase block">Veto Note</span>
-                        {isEditing && !isRushCommitteeOnly ? (
-                          <textarea
-                            value={editedValues.veto_note || ""}
-                            onChange={(e) => setEditedValues({ ...editedValues, veto_note: e.target.value })}
-                            className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-14 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                            placeholder="Veto comments..."
-                          />
-                        ) : (
-                          <p className="text-sm text-zinc-700 whitespace-pre-line leading-relaxed min-h-[1.5rem]">
-                            {selectedPnmForDetails.veto_note || "—"}
-                          </p>
-                        )}
-                        {feedbackList
-                          .filter((fb) => fb.feedback_type === "Veto" && fb.is_approved === 1)
-                          .map((fb) => (
-                            <div
-                              key={fb.id}
-                              className="text-xs text-zinc-600 bg-zinc-50 border-l-2 border-purple-500 pl-2 py-1.5 mt-1 rounded-r leading-relaxed whitespace-pre-line shadow-xs"
-                            >
-                              {fb.comment}
-                            </div>
-                          ))}
-                      </div>
+                    {/* Veto */}
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs font-semibold text-purple-700 uppercase block">Veto Note</span>
+                      {isEditing && !isRushCommitteeOnly ? (
+                        <textarea
+                          value={editedValues.veto_note || ""}
+                          onChange={(e) => setEditedValues({ ...editedValues, veto_note: e.target.value })}
+                          className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-14 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                          placeholder="Veto comments..."
+                        />
+                      ) : (
+                        <p className="text-sm text-zinc-700 whitespace-pre-line leading-relaxed min-h-[1.5rem]">
+                          {selectedPnmForDetails.veto_note || "—"}
+                        </p>
+                      )}
+                      {feedbackList
+                        .filter((fb) => fb.feedback_type === "Veto" && fb.is_approved === 1)
+                        .map((fb) => (
+                          <div
+                            key={fb.id}
+                            className="text-xs text-zinc-600 bg-zinc-50 border-l-2 border-purple-500 pl-2 py-1.5 mt-1 rounded-r leading-relaxed whitespace-pre-line shadow-xs"
+                          >
+                            {fb.comment}
+                          </div>
+                        ))}
+                    </div>
 
-                      {/* Application Comment (Placed directly below feedback, moves dynamically) */}
-                      <div className="border-t border-zinc-200 pt-4">
-                        <h4 className="text-lg font-bold text-zinc-800 mb-2">
-                          Application Comment: <span className="text-sm text-zinc-400 font-normal">(Best 3 Things)</span>
-                        </h4>
-                        {isEditing ? (
-                          <textarea
-                            value={editedValues.application_comments || ""}
-                            onChange={(e) =>
-                              setEditedValues({
-                                ...editedValues,
-                                application_comments: e.target.value,
-                              })
-                            }
-                            className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-20 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
-                            placeholder="- Detail 1&#10;- Detail 2&#10;- Detail 3"
-                          />
-                        ) : (
-                          <p className="text-sm text-zinc-700 whitespace-pre-line leading-relaxed">
-                            {selectedPnmForDetails.application_comments || "No comments entered."}
-                          </p>
-                        )}
-                      </div>
+                    {/* Application Comment (Placed directly below feedback, moves dynamically) */}
+                    <div className="border-t border-zinc-200 pt-4">
+                      <h4 className="text-lg font-bold text-zinc-800 mb-2">
+                        Application Comment: <span className="text-sm text-zinc-400 font-normal">(Best 3 Things)</span>
+                      </h4>
+                      {isEditing ? (
+                        <textarea
+                          value={editedValues.application_comments || ""}
+                          onChange={(e) =>
+                            setEditedValues({
+                              ...editedValues,
+                              application_comments: e.target.value,
+                            })
+                          }
+                          className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-20 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                          placeholder="- Detail 1&#10;- Detail 2&#10;- Detail 3"
+                        />
+                      ) : (
+                        <p className="text-sm text-zinc-700 whitespace-pre-line leading-relaxed">
+                          {selectedPnmForDetails.application_comments || "No comments entered."}
+                        </p>
+                      )}
                     </div>
                   </div>
+                </div>
 
                 {/* Right Column: Interviewers and Interview Notes */}
                 <div className="md:col-span-1 pl-6 flex flex-col gap-4">
@@ -1547,13 +1570,12 @@ export default function SearchPnmPage() {
                     ) : (
                       <div className="flex items-center gap-2">
                         <span
-                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${
-                            fb.is_approved === 1
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${fb.is_approved === 1
                               ? "bg-green-100 text-green-700 border border-green-200"
                               : fb.is_approved === -1
-                              ? "bg-red-100 text-red-700 border border-red-200"
-                              : "bg-amber-100 text-amber-700 border border-amber-200"
-                          }`}
+                                ? "bg-red-100 text-red-700 border border-red-200"
+                                : "bg-amber-100 text-amber-700 border border-amber-200"
+                            }`}
                         >
                           {fb.is_approved === 1 ? "Approved" : fb.is_approved === -1 ? "Declined" : "Pending"}
                         </span>
@@ -1761,11 +1783,10 @@ export default function SearchPnmPage() {
 
                 <p className="text-[11px] text-zinc-500 font-medium">
                   {parseInt(reviewerCountInput, 10) > 0 && pnms.length > 0
-                    ? `~${Math.floor(pnms.length / parseInt(reviewerCountInput, 10))}${
-                        pnms.length % parseInt(reviewerCountInput, 10) !== 0
-                          ? `-${Math.ceil(pnms.length / parseInt(reviewerCountInput, 10))}`
-                          : ""
-                      } PNMs per reviewer. No duplicates or omissions.`
+                    ? `~${Math.floor(pnms.length / parseInt(reviewerCountInput, 10))}${pnms.length % parseInt(reviewerCountInput, 10) !== 0
+                      ? `-${Math.ceil(pnms.length / parseInt(reviewerCountInput, 10))}`
+                      : ""
+                    } PNMs per reviewer. No duplicates or omissions.`
                     : `Total directory pool: ${pnms.length} candidates.`}
                 </p>
               </div>
