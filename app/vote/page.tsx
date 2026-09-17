@@ -1131,6 +1131,7 @@ export default function VoteDashboard() {
 
   // Presentation Mode: Change Active PNM
   const handleSelectPresentationPnm = async (studentId: string) => {
+    if (!isRegent) return;
     try {
       setActivePnmId(studentId);
       const { error } = await supabase.rpc("select_candidate", {
@@ -1398,7 +1399,11 @@ export default function VoteDashboard() {
 
   const handleSubmitFeedback = async (e: React.FormEvent) => {
     e.preventDefault();
-    const targetStudentId = isPresentationRound ? activePnm?.student_id : selectedPnmForDetails?.student_id;
+    const targetStudentId = selectedPnmForDetails
+      ? selectedPnmForDetails.student_id
+      : isPresentationRound
+      ? activePnm?.student_id
+      : null;
     if (!targetStudentId) return;
 
     if (!newFeedbackComment.trim()) {
@@ -1823,14 +1828,9 @@ export default function VoteDashboard() {
 
         {/* Middle Block: Active Candidates */}
         <div className="bg-white rounded-lg p-5 border border-zinc-200 shadow-sm flex flex-col justify-between min-h-[120px]">
-          <div className="flex justify-between items-center">
-            <span className="text-zinc-500 font-semibold text-sm uppercase tracking-wider">
-              {isPresentationRound ? "Candidates in Contest" : "Total PNMs Registered"}
-            </span>
-            <span className="text-xs font-mono font-bold text-zinc-500">
-              Approved: {approvedPnms.length} | Denied: {deniedPnms.length}
-            </span>
-          </div>
+          <span className="text-zinc-500 font-semibold text-sm uppercase tracking-wider">
+            {isPresentationRound ? "Candidates in Contest" : "Total PNMs Registered"}
+          </span>
           <span className="text-3xl font-bold font-mono text-zinc-800 mt-2">
             {filteredPnms.length}
             {isPresentationRound && (
@@ -2338,7 +2338,7 @@ export default function VoteDashboard() {
                       </div>
                     </div>
 
-                      <div className="flex-1 overflow-y-auto space-y-4 pr-2 max-h-[380px]">
+                      <div className="flex-1 overflow-y-auto space-y-4 pr-2">
                         {/* Positive */}
                         <div className="flex flex-col gap-1">
                           <span className="text-xs font-semibold text-green-700 uppercase block">Positive Note</span>
@@ -2448,7 +2448,7 @@ export default function VoteDashboard() {
                         </div>
 
                         {/* Application Comment */}
-                        <div className="border-t border-zinc-200 pt-4">
+                        <div className="border-t border-zinc-200 pt-4 flex flex-col">
                           <h4 className="text-lg font-bold text-zinc-800 mb-2">
                             Application Comment: <span className="text-sm text-zinc-400 font-normal">(Best 3 Things)</span>
                           </h4>
@@ -2461,7 +2461,7 @@ export default function VoteDashboard() {
                                   application_comments: e.target.value,
                                 })
                               }
-                              className="w-full text-sm border border-zinc-300 rounded px-2 py-1 h-20 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
+                              className="w-full text-sm border border-zinc-300 rounded px-2 py-1 min-h-[100px] h-32 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-red-700"
                               placeholder="- Detail 1&#10;- Detail 2&#10;- Detail 3"
                             />
                           ) : (
@@ -2614,8 +2614,14 @@ export default function VoteDashboard() {
                           <div className="flex items-center justify-between gap-1.5">
                             <h3
                               className="font-bold text-lg text-zinc-900 truncate leading-tight cursor-pointer hover:text-red-700 transition-colors flex-1 min-w-0"
-                              title={pnm.full_name}
-                              onClick={() => handleSelectPresentationPnm(pnm.student_id)}
+                              title={isRegent ? `Select ${pnm.full_name} to present` : `View details for ${pnm.full_name}`}
+                              onClick={() => {
+                                if (isRegent) {
+                                  handleSelectPresentationPnm(pnm.student_id);
+                                } else {
+                                  handleOpenDetails(pnm);
+                                }
+                              }}
                             >
                               {pnm.full_name}
                             </h3>
@@ -4223,8 +4229,11 @@ export default function VoteDashboard() {
                 <span className="text-xs font-semibold text-zinc-400 uppercase tracking-wider block">
                   Candidate Name
                 </span>
-                <p className="text-lg font-bold text-zinc-900 mt-0.5" title={isPresentationRound ? activePnm?.full_name : selectedPnmForDetails?.full_name}>
-                  {isPresentationRound ? activePnm?.full_name : selectedPnmForDetails?.full_name}
+                <p
+                  className="text-lg font-bold text-zinc-900 mt-0.5"
+                  title={selectedPnmForDetails ? selectedPnmForDetails.full_name : isPresentationRound ? activePnm?.full_name : ""}
+                >
+                  {selectedPnmForDetails ? selectedPnmForDetails.full_name : isPresentationRound ? activePnm?.full_name : ""}
                 </p>
               </div>
 
