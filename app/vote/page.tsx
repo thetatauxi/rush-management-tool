@@ -384,13 +384,16 @@ export default function VoteDashboard() {
       )
       .subscribe();
 
-    const pollOpsInterval = setInterval(() => {
+    const handleFocus = () => {
       fetchInitialOps();
-    }, 1200);
+    };
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("online", handleFocus);
 
     return () => {
       supabase.removeChannel(channel);
-      clearInterval(pollOpsInterval);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("online", handleFocus);
     };
   }, [checkingAuth]);
 
@@ -468,17 +471,19 @@ export default function VoteDashboard() {
       }
       setRoundCounts(countsMap);
 
-      // Fetch section-wide candidate statuses for Approved/Denied list
+      // Fetch section-wide candidate statuses in parallel for Approved/Denied list
       const sectionTables =
         votingSection === 1
           ? ["voting-s1-r1", "voting-s1-r2"]
           : ["voting-s2-r1", "voting-s2-r2", "voting-s2-r3"];
 
       const sectionStatusMap: Record<string, CandidateStatus> = {};
-      for (const tbl of sectionTables) {
-        const { data: tblData } = await supabase.from(tbl).select("id, status");
-        if (tblData) {
-          tblData.forEach((r) => {
+      const statusResults = await Promise.all(
+        sectionTables.map((tbl) => supabase.from(tbl).select("id, status"))
+      );
+      for (const res of statusResults) {
+        if (res.data) {
+          res.data.forEach((r) => {
             if (r.status === "approved" || r.status === "denied") {
               sectionStatusMap[r.id] = r.status as CandidateStatus;
             } else if (!sectionStatusMap[r.id]) {
@@ -670,32 +675,51 @@ export default function VoteDashboard() {
 
     fetchRoundCounts();
 
-    const channelName = `${currentTableName}-realtime-${Date.now()}`;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const debouncedFetch = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        fetchRoundCounts();
+      }, 500);
+    };
+
+    const channelName = `${currentTableName}-realtime`;
     const channel = supabase
       .channel(channelName)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: currentTableName },
-        () => {
-          fetchRoundCounts();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "member_votes" },
-        () => {
-          fetchRoundCounts();
+        (payload) => {
+          // Instant zero-latency local update from Realtime payload
+          const row = payload.new as any;
+          if (row && row.id) {
+            setRoundCounts((prev) => ({
+              ...prev,
+              [row.id]: {
+                positive: row.positive || 0,
+                abstain: row.abstain || 0,
+                negative: row.negative || 0,
+                status: (row.status || "in_contest") as CandidateStatus,
+                is_overridden: Boolean(row.is_overridden),
+              },
+            }));
+          }
+          debouncedFetch();
         }
       )
       .subscribe();
 
-    const pollInterval = setInterval(() => {
+    const handleFocus = () => {
       fetchRoundCounts();
-    }, 1500);
+    };
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("online", handleFocus);
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
-      clearInterval(pollInterval);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("online", handleFocus);
     };
   }, [votingSection, votingRound, currentTableName, fetchRoundCounts]);
 
@@ -958,7 +982,9 @@ export default function VoteDashboard() {
       if (diffSeconds <= 0) {
         setCountdownSeconds(0);
 
-        if (!isClosingRef.current) {
+        // Only Admin (Regent, VR, Website Chair) triggers the RPC to finalize countdown.
+        // All other users will receive the closed status via the Realtime websocket broadcast.
+        if (isStrictAdmin && !isClosingRef.current) {
           isClosingRef.current = true;
           try {
             const { data: didClose, error } = await supabase.rpc("finish_voting_countdown", {
@@ -993,7 +1019,7 @@ export default function VoteDashboard() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [closingEndsAt, votingSection, votingRound, fetchRoundCounts]);
+  }, [closingEndsAt, votingSection, votingRound, fetchRoundCounts, isStrictAdmin]);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -1254,20 +1280,10 @@ export default function VoteDashboard() {
     }
 
     try {
-      const { data: ops, error: opsError } = await supabase
-        .from("voting-ops")
-        .select("section, round, round_status, voting_status, active_pnm_id")
-        .eq("id", 1)
-        .maybeSingle();
-
-      if (opsError) throw opsError;
-
-      const dbSec = ops?.section ?? 1;
-      const dbRnd = ops?.round ?? 1;
-      const dbRoundStatus = ops?.round_status ?? "idle";
-      const dbVotingStatus = ops?.voting_status ?? "closed";
-
-      if (dbRoundStatus !== "in_progress" || (dbVotingStatus !== "open" && dbVotingStatus !== "closing") || dbSec !== votingSection || dbRnd !== votingRound) {
+      if (
+        roundStatus !== "in_progress" ||
+        (votingStatus !== "open" && votingStatus !== "closing")
+      ) {
         toast.error("Voting is not currently open for this round.");
         return;
       }
