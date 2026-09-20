@@ -636,10 +636,12 @@ export default function SearchPnmPage() {
 
   const handleSaveChanges = async (targetPnm: PNM) => {
     try {
-      const updatePayload = isRushCommitteeOnly
+      const updatePayload = !isFullAdmin
         ? {
           application_comments: editedValues.application_comments,
-          ...(appCommitteeEnabled && {
+          interviewer_names: editedValues.interviewer_names,
+          interview_notes: editedValues.interview_notes,
+          ...(canEditApplication && {
             application: editedValues.application !== undefined ? editedValues.application : (targetPnm.application !== false),
           }),
         }
@@ -691,12 +693,13 @@ export default function SearchPnmPage() {
     normalizedUserRole === "vr" ||
     normalizedUserRole === "website chair" ||
     normalizedUserRole === "admin";
+  const isFullAdmin = isStrictAdmin || isRushChair || normalizedUserRole === "rush chair";
 
-  const isRushCommitteeOnly = (isRushCommittee || normalizedUserRole === "rush committee") && !isStrictAdmin && !isRushChair && normalizedUserRole !== "rush chair";
-  const canEdit = isStrictAdmin || isRushChair || normalizedUserRole === "rush chair" || ((isRushCommittee || normalizedUserRole === "rush committee") && appCommitteeEnabled);
-  const canEditApplication = isStrictAdmin || isRushChair || normalizedUserRole === "rush chair" || ((isRushCommittee || normalizedUserRole === "rush committee") && appCommitteeEnabled);
+  const isRushCommitteeOnly = (isRushCommittee || normalizedUserRole === "rush committee") && !isFullAdmin;
+  const canEdit = isFullAdmin || appCommitteeEnabled;
+  const canEditApplication = isFullAdmin || ((isRushCommittee || normalizedUserRole === "rush committee") && appCommitteeEnabled);
 
-  const canSplitSearch = isStrictAdmin || isRushChair || normalizedUserRole === "rush chair";
+  const canSplitSearch = isFullAdmin;
 
   if (checkingAuth) {
     return (
@@ -989,7 +992,7 @@ export default function SearchPnmPage() {
                 {/* Left Column: Name, Photo, Dots, Major/Yr, Absence */}
                 <div className="md:col-span-1 border-r border-zinc-200 pr-6 flex flex-col gap-4">
                   <div className="border-b border-zinc-200 pb-3">
-                    {isEditing && !isRushCommitteeOnly ? (
+                    {isEditing && isFullAdmin ? (
                       <input
                         type="text"
                         value={editedValues.full_name || ""}
@@ -1037,7 +1040,7 @@ export default function SearchPnmPage() {
                     <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
                       Major / Year
                     </span>
-                    {isEditing && !isRushCommitteeOnly ? (
+                    {isEditing && isFullAdmin ? (
                       <div className="flex flex-col gap-1.5">
                         <input
                           type="text"
@@ -1073,13 +1076,13 @@ export default function SearchPnmPage() {
                         <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
                           Event Attendance
                         </span>
-                        {isEditing && !isRushCommitteeOnly && (
+                        {isEditing && isFullAdmin && (
                           <span className="text-[9px] text-zinc-400 font-semibold italic">Click to toggle</span>
                         )}
                       </div>
                       <div className="flex flex-col gap-1.5 mt-0.5">
                         {(["event_1", "event_2", "event_3", "event_4", "event_5", "event_6"] as const).map((key, i) => {
-                          const isEditingEvents = isEditing && !isRushCommitteeOnly;
+                          const isEditingEvents = isEditing && isFullAdmin;
                           const isAttended = isEditingEvents ? !!editedValues[key] : !!selectedPnmForDetails[key];
                           const eventName = EVENT_HEADERS[i] || `Event ${i + 1}`;
 
@@ -1120,7 +1123,7 @@ export default function SearchPnmPage() {
                         <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
                           Absence Form (#)
                         </span>
-                        {isEditing && !isRushCommitteeOnly ? (
+                        {isEditing && isFullAdmin ? (
                           <input
                             type="number"
                             value={editedValues.absence_form_num ?? 0}
@@ -1143,7 +1146,7 @@ export default function SearchPnmPage() {
                         <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">
                           Reason for Absence
                         </span>
-                        {isEditing && !isRushCommitteeOnly ? (
+                        {isEditing && isFullAdmin ? (
                           <textarea
                             value={editedValues.absence_reason || ""}
                             onChange={(e) => setEditedValues({ ...editedValues, absence_reason: e.target.value })}
@@ -1277,7 +1280,7 @@ export default function SearchPnmPage() {
                     {/* Positive */}
                     <div className="flex flex-col gap-1">
                       <span className="text-xs font-semibold text-green-700 uppercase block">Positive Note</span>
-                      {isEditing && !isRushCommitteeOnly ? (
+                      {isEditing && isFullAdmin ? (
                         <textarea
                           value={editedValues.positive_note || ""}
                           onChange={(e) => setEditedValues({ ...editedValues, positive_note: e.target.value })}
@@ -1304,7 +1307,7 @@ export default function SearchPnmPage() {
                     {/* Negative */}
                     <div className="flex flex-col gap-1">
                       <span className="text-xs font-semibold text-red-700 uppercase block">Negative Note</span>
-                      {isEditing && !isRushCommitteeOnly ? (
+                      {isEditing && isFullAdmin ? (
                         <textarea
                           value={editedValues.negative_note || ""}
                           onChange={(e) => setEditedValues({ ...editedValues, negative_note: e.target.value })}
@@ -1331,7 +1334,7 @@ export default function SearchPnmPage() {
                     {/* Other */}
                     <div className="flex flex-col gap-1">
                       <span className="text-xs font-semibold text-zinc-700 uppercase block">Other Note</span>
-                      {isEditing && !isRushCommitteeOnly ? (
+                      {isEditing && isFullAdmin ? (
                         <textarea
                           value={editedValues.other_note || ""}
                           onChange={(e) => setEditedValues({ ...editedValues, other_note: e.target.value })}
@@ -1358,7 +1361,7 @@ export default function SearchPnmPage() {
                     {/* Veto */}
                     <div className="flex flex-col gap-1">
                       <span className="text-xs font-semibold text-purple-700 uppercase block">Veto Note</span>
-                      {isEditing && !isRushCommitteeOnly ? (
+                      {isEditing && isFullAdmin ? (
                         <textarea
                           value={editedValues.veto_note || ""}
                           onChange={(e) => setEditedValues({ ...editedValues, veto_note: e.target.value })}
@@ -1416,7 +1419,7 @@ export default function SearchPnmPage() {
                     <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider block mb-1">
                       Names of Interviewers
                     </span>
-                    {isEditing && !isRushCommitteeOnly ? (
+                    {isEditing ? (
                       <input
                         type="text"
                         value={editedValues.interviewer_names || ""}
@@ -1441,7 +1444,7 @@ export default function SearchPnmPage() {
                       Comments
                     </span>
                     <div className="flex-1 overflow-y-auto pr-1">
-                      {isEditing && !isRushCommitteeOnly ? (
+                      {isEditing ? (
                         <textarea
                           value={editedValues.interview_notes || ""}
                           onChange={(e) =>
