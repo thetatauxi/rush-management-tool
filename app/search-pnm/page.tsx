@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -73,6 +73,11 @@ export default function SearchPnmPage() {
   const [hasViewFeedbackPrivilege, setHasViewFeedbackPrivilege] = useState(false);
   const [appCommitteeEnabled, setAppCommitteeEnabled] = useState(false);
   const [pendingFeedbackPnmIds, setPendingFeedbackPnmIds] = useState<Set<string>>(new Set());
+
+  // Show Invitees (Section 2) Filter States
+  const [showInviteesOnly, setShowInviteesOnly] = useState(false);
+  const [inviteeIds, setInviteeIds] = useState<Set<string>>(new Set());
+  const [isLoadingInvitees, setIsLoadingInvitees] = useState(false);
 
   // Split Search for Rush Committee States
   const [showSplitModal, setShowSplitModal] = useState(false);
@@ -288,6 +293,55 @@ export default function SearchPnmPage() {
     };
   }, [checkingAuth]);
 
+  // Load and refresh invitee IDs (candidates approved in Section 1 or present in Section 2)
+  const fetchInviteeIds = useCallback(async () => {
+    try {
+      const inviteeSet = new Set<string>();
+      const roundQueries = [
+        supabase.from("voting-s1-r1").select("id").eq("status", "approved"),
+        supabase.from("voting-s1-r2").select("id").eq("status", "approved"),
+        supabase.from("voting-s2-r1").select("id"),
+        supabase.from("voting-s2-r2").select("id"),
+        supabase.from("voting-s2-r3").select("id"),
+      ];
+
+      const results = await Promise.allSettled(roundQueries);
+      for (const res of results) {
+        if (res.status === "fulfilled" && res.value.data) {
+          res.value.data.forEach((row: { id: string }) => {
+            if (row.id) inviteeSet.add(row.id);
+          });
+        }
+      }
+      setInviteeIds(inviteeSet);
+      return inviteeSet;
+    } catch (err) {
+      console.error("Error fetching invitees:", err);
+      return new Set<string>();
+    }
+  }, []);
+
+  // Fetch invitees on initial load only (no real-time polling during active voting)
+  useEffect(() => {
+    if (checkingAuth) return;
+    fetchInviteeIds();
+  }, [checkingAuth, fetchInviteeIds]);
+
+  // Handle toggling the "Show Invitees" filter
+  const handleToggleShowInvitees = async () => {
+    const nextVal = !showInviteesOnly;
+    setShowInviteesOnly(nextVal);
+
+    if (nextVal) {
+      setIsLoadingInvitees(true);
+      const latest = await fetchInviteeIds();
+      setIsLoadingInvitees(false);
+      if (latest.size === 0) {
+        toast.info("No candidates have been approved for invites yet.");
+      }
+    }
+  };
+
   // Check if current search query matches a review split hex code
   const activeSplitMatch = useMemo(() => {
     const raw = searchQuery.trim();
@@ -311,15 +365,20 @@ export default function SearchPnmPage() {
 
   // Multi-field search filtering & hex code review split filtering (sorted alphabetically)
   const filteredPnms = useMemo(() => {
+    let sourceList = pnms;
+    if (showInviteesOnly) {
+      sourceList = sourceList.filter((p) => inviteeIds.has(p.student_id));
+    }
+
     const raw = searchQuery.trim();
     if (!raw) {
-      return [...pnms].sort((a, b) => a.full_name.localeCompare(b.full_name));
+      return [...sourceList].sort((a, b) => a.full_name.localeCompare(b.full_name));
     }
 
     // Unread feedback '*' search for rush chairs and admin
     if (raw === "*" || raw.startsWith("*")) {
       const rest = raw.replace(/^\*/, "").trim().toLowerCase();
-      return pnms
+      return sourceList
         .filter((pnm) => {
           if (hasViewFeedbackPrivilege && !pendingFeedbackPnmIds.has(pnm.student_id)) {
             return false;
@@ -345,19 +404,19 @@ export default function SearchPnmPage() {
     const clean = raw.replace(/^#/, "").toUpperCase();
 
     // If query matches a review split hex code, filter strictly to assigned PNMs
-    const isSplitCodeMatch = pnms.some(
+    const isSplitCodeMatch = sourceList.some(
       (p) => p.review_code && p.review_code.toUpperCase() === clean
     );
 
     if (isSplitCodeMatch) {
-      return pnms
+      return sourceList
         .filter((p) => p.review_code && p.review_code.toUpperCase() === clean)
         .sort((a, b) => a.full_name.localeCompare(b.full_name));
     }
 
     // Standard multi-field search
     const terms = raw.toLowerCase().split(/\s+/).filter(Boolean);
-    const list = pnms.filter((pnm) => {
+    const list = sourceList.filter((pnm) => {
       const searchableFields = [
         pnm.full_name,
         pnm.email,
@@ -375,7 +434,7 @@ export default function SearchPnmPage() {
     });
 
     return list.sort((a, b) => a.full_name.localeCompare(b.full_name));
-  }, [pnms, searchQuery, pendingFeedbackPnmIds, hasViewFeedbackPrivilege]);
+  }, [pnms, searchQuery, pendingFeedbackPnmIds, hasViewFeedbackPrivilege, showInviteesOnly, inviteeIds]);
 
   // Handle generating equal and random PNM review splits
   const handleGenerateSplits = async () => {
@@ -768,12 +827,52 @@ export default function SearchPnmPage() {
             )}
           </div>
 
-          {/* Result Count & Split Search (Right Side) */}
-          <div className="flex items-center justify-end gap-3 w-full md:w-auto">
+          {/* Result Count, Show Invitees, & Split Search (Right Side) */}
+          <div className="flex items-center justify-end gap-2.5 w-full md:w-auto">
             <div className="bg-zinc-100 text-zinc-800 border border-zinc-200/80 px-3.5 py-1.5 rounded-lg text-xs font-bold font-mono shadow-2xs whitespace-nowrap">
               <span className="text-red-700 font-extrabold text-sm mr-1">{filteredPnms.length}</span>
               {filteredPnms.length === 1 ? "PNM" : "PNMs"} Found
             </div>
+
+            {/* Show Invitees Button */}
+            <button
+              onClick={handleToggleShowInvitees}
+              disabled={isLoadingInvitees}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold font-mono shadow-xs transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap hover:scale-105 ${
+                showInviteesOnly
+                  ? "bg-red-700 hover:bg-red-800 text-white border border-red-800 ring-2 ring-red-700/20"
+                  : "bg-white hover:bg-zinc-100 text-zinc-850 border border-zinc-300 hover:border-zinc-400 shadow-2xs"
+              }`}
+              title={
+                showInviteesOnly
+                  ? "Currently showing invitees only. Click to show all PNMs."
+                  : "Show candidates who made it to the Section 2 / Invite round"
+              }
+            >
+              {showInviteesOnly ? (
+                <>
+                  <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                  <span>Showing Invitees</span>
+                  <span className="bg-red-900/60 text-white text-[10px] px-1.5 py-0.2 rounded-full font-bold ml-0.5">
+                    {inviteeIds.size}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>Show Invitees</span>
+                  {inviteeIds.size > 0 && (
+                    <span className="bg-zinc-100 text-zinc-600 border border-zinc-200 text-[10px] px-1.5 py-0.2 rounded-full font-bold ml-0.5">
+                      {inviteeIds.size}
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
 
             {canSplitSearch && (
               <button
@@ -789,6 +888,30 @@ export default function SearchPnmPage() {
             )}
           </div>
         </div>
+
+        {/* Active Invitees Filter Banner */}
+        {showInviteesOnly && (
+          <div className="mt-3 bg-red-50/90 border border-red-200 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs font-mono text-red-950 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-pulse" />
+              <span>
+                Filter Active:{" "}
+                <strong className="bg-red-200/80 text-red-950 px-1.5 py-0.5 rounded font-bold">
+                  Section 2 / Invitees Only
+                </strong>
+              </span>
+              <span className="text-zinc-600 font-sans">
+                &bull; Showing <strong>{filteredPnms.length}</strong> of <strong>{inviteeIds.size}</strong> candidate{inviteeIds.size === 1 ? "" : "s"}
+              </span>
+            </div>
+            <button
+              onClick={() => setShowInviteesOnly(false)}
+              className="bg-white hover:bg-red-100 text-red-700 border border-red-300 px-2.5 py-1 rounded text-xs font-bold font-sans transition-colors cursor-pointer"
+            >
+              Show All Candidates
+            </button>
+          </div>
+        )}
 
         {/* Active Split Filter Banner */}
         {activeSplitMatch && (
@@ -834,22 +957,42 @@ export default function SearchPnmPage() {
               </svg>
             </div>
             <h3 className="text-lg font-bold text-zinc-800">
-              {searchQuery.trim() === "*" || searchQuery.trim().startsWith("*")
+              {showInviteesOnly
+                ? searchQuery
+                  ? "No invitees match your search"
+                  : "No candidates have been approved for Section 2 / invites yet"
+                : searchQuery.trim() === "*" || searchQuery.trim().startsWith("*")
                 ? "No candidates with unread feedback found"
                 : "No candidates match your search"}
             </h3>
             <p className="text-sm text-zinc-500 mt-1">
-              {searchQuery.trim() === "*" || searchQuery.trim().startsWith("*")
+              {showInviteesOnly
+                ? searchQuery
+                  ? "Try searching for another name or student ID, or clear the search query."
+                  : "Check back once Section 1 voting rounds have concluded and candidates are approved."
+                : searchQuery.trim() === "*" || searchQuery.trim().startsWith("*")
                 ? "All submitted feedback has been approved or declined."
                 : "Try searching with a different name, email, student ID, major, or clear the search query."}
             </p>
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="mt-4 px-4 py-2 bg-red-700 text-white text-xs font-semibold rounded-lg hover:bg-red-800 transition-colors shadow-sm cursor-pointer"
-              >
-                Clear Search Filter
-              </button>
+            {(searchQuery || showInviteesOnly) && (
+              <div className="mt-4 flex items-center justify-center gap-2">
+                {showInviteesOnly && (
+                  <button
+                    onClick={() => setShowInviteesOnly(false)}
+                    className="px-4 py-2 bg-zinc-800 text-white text-xs font-semibold rounded-lg hover:bg-zinc-900 transition-colors shadow-sm cursor-pointer"
+                  >
+                    Show All Candidates
+                  </button>
+                )}
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery("")}
+                    className="px-4 py-2 bg-red-700 text-white text-xs font-semibold rounded-lg hover:bg-red-800 transition-colors shadow-sm cursor-pointer"
+                  >
+                    Clear Search Filter
+                  </button>
+                )}
+              </div>
             )}
           </div>
         ) : (
@@ -922,12 +1065,22 @@ export default function SearchPnmPage() {
                       >
                         {pnm.full_name}
                       </h3>
-                      {hasViewFeedbackPrivilege && pendingFeedbackPnmIds.has(pnm.student_id) && (
-                        <span
-                          className="w-2.5 h-2.5 rounded-full bg-purple-600 ring-2 ring-purple-200 flex-shrink-0"
-                          title="Pending unread feedback waiting for approval"
-                        />
-                      )}
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {inviteeIds.has(pnm.student_id) && (
+                          <span
+                            className="bg-emerald-100 text-emerald-800 border border-emerald-300 text-[9.5px] font-bold px-1.5 py-0.2 rounded font-mono"
+                            title="Candidate approved for invite / Section 2"
+                          >
+                            Invited
+                          </span>
+                        )}
+                        {hasViewFeedbackPrivilege && pendingFeedbackPnmIds.has(pnm.student_id) && (
+                          <span
+                            className="w-2.5 h-2.5 rounded-full bg-purple-600 ring-2 ring-purple-200 flex-shrink-0"
+                            title="Pending unread feedback waiting for approval"
+                          />
+                        )}
+                      </div>
                     </div>
                     <p
                       className="text-zinc-500 text-xs font-medium truncate mt-0.5"
@@ -1003,6 +1156,14 @@ export default function SearchPnmPage() {
                       <h2 className="text-3xl font-bold tracking-tight text-zinc-950 truncate" title={selectedPnmForDetails.full_name}>
                         {selectedPnmForDetails.full_name}
                       </h2>
+                    )}
+                    {inviteeIds.has(selectedPnmForDetails.student_id) && (
+                      <span className="inline-flex items-center gap-1 mt-2 px-2 py-0.5 rounded-md text-[11px] font-bold font-mono bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        <svg className="w-3 h-3 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2.5">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                        Section 2 / Invitee
+                      </span>
                     )}
                   </div>
 

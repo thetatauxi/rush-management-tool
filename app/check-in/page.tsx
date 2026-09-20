@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -26,6 +26,8 @@ export default function CheckIn() {
   const [checkedInName, setCheckedInName] = useState<string>("");
   const [showError, setShowError] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [checkedInCount, setCheckedInCount] = useState<number | null>(null);
+  const [isLoadingCount, setIsLoadingCount] = useState(false);
 
   // Check Supabase authentication
   useEffect(() => {
@@ -55,7 +57,60 @@ export default function CheckIn() {
     }
   };
 
+  // Fetch checked-in count for the selected event
+  const fetchCheckedInCount = useCallback(async (selectedEvent: string) => {
+    try {
+      setIsLoadingCount(true);
+      const eventIndex = EVENT_HEADERS.indexOf(selectedEvent);
+      if (eventIndex === -1) return;
+      const eventKey = `event_${eventIndex + 1}`;
+
+      const { count, error } = await supabase
+        .from("pnms")
+        .select("*", { count: "exact", head: true })
+        .eq(eventKey, true);
+
+      if (error) {
+        const { data: rows, error: selectError } = await supabase
+          .from("pnms")
+          .select("student_id")
+          .eq(eventKey, true);
+        if (!selectError && rows) {
+          setCheckedInCount(rows.length);
+        }
+      } else {
+        setCheckedInCount(count ?? 0);
+      }
+    } catch (err) {
+      console.error("Error fetching checked-in count:", err);
+    } finally {
+      setIsLoadingCount(false);
+    }
+  }, []);
+
+  // Fetch count on load, when event changes, and subscribe to real-time updates
+  useEffect(() => {
+    if (checkingAuth) return;
+    fetchCheckedInCount(eventType);
+
+    const channel = supabase
+      .channel("checkin-pnm-counter")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "pnms" },
+        () => {
+          fetchCheckedInCount(eventType);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [checkingAuth, eventType, fetchCheckedInCount]);
+
   const handleEventConfirm = () => {
+    fetchCheckedInCount(eventType);
     setKioskMode("scanning");
   };
 
@@ -128,6 +183,8 @@ export default function CheckIn() {
       setCheckedInName(pnm.full_name);
       setShowSuccess(true);
       setIdNumber("");
+      setCheckedInCount((prev) => (prev !== null ? prev + 1 : 1));
+      fetchCheckedInCount(eventType);
       // Auto-return to scanning after 2 seconds
       setTimeout(() => {
         setShowSuccess(false);
@@ -194,6 +251,12 @@ export default function CheckIn() {
                   </option>
                 ))}
               </select>
+              <p className="text-xs text-zinc-500 mt-1">
+                Currently checked in:{" "}
+                <span className="font-semibold text-zinc-700">
+                  {checkedInCount !== null ? `${checkedInCount} PNMs` : "Loading..."}
+                </span>
+              </p>
             </div>
             <div className="flex gap-4 mt-2">
               <button
@@ -226,9 +289,47 @@ export default function CheckIn() {
           <h1 className="text-4xl font-mono font-bold underline decoration-red-300 mb-6">
             Welcome! Scan your Wiscard to check in.
           </h1>
-          <div className="bg-red-100 border border-red-300 rounded-md p-3 mb-4">
-            <p className="text-sm font-medium text-red-800">Current Rush Event:</p>
-            <p className="text-lg font-semibold text-red-900">{eventType}</p>
+          <div className="bg-red-100 border border-red-300 rounded-md p-3.5 mb-4 grid grid-cols-2 divide-x divide-red-300">
+            <div className="pr-3 flex flex-col justify-center">
+              <div className="flex items-center justify-between gap-1">
+                <p className="text-xs font-semibold uppercase tracking-wider text-red-800/90">
+                  Current Rush Event:
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIdNumber("");
+                    setKioskMode("event-selection");
+                  }}
+                  className="text-[11px] text-red-700 hover:text-red-900 font-semibold underline cursor-pointer"
+                  title="Change rush event"
+                >
+                  Change
+                </button>
+              </div>
+              <p className="text-base sm:text-lg font-bold text-red-950 mt-0.5 leading-snug">
+                {eventType}
+              </p>
+            </div>
+            <div className="pl-4 flex flex-col justify-center">
+              <p className="text-xs font-semibold uppercase tracking-wider text-red-800/90">
+                Total Checked In:
+              </p>
+              <p className="text-base sm:text-lg font-bold text-red-950 mt-0.5 leading-snug flex items-baseline gap-1.5">
+                {isLoadingCount && checkedInCount === null ? (
+                  <span className="text-sm font-medium text-red-700 animate-pulse">Loading...</span>
+                ) : (
+                  <>
+                    <span className="text-2xl font-black font-mono text-red-950 leading-none">
+                      {checkedInCount ?? 0}
+                    </span>
+                    <span className="text-xs font-bold text-red-800">
+                      {checkedInCount === 1 ? "PNM" : "PNMs"}
+                    </span>
+                  </>
+                )}
+              </p>
+            </div>
           </div>
         </div>
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -262,9 +363,20 @@ export default function CheckIn() {
             <button
               type="submit"
               disabled={isLoading || showSuccess}
-              className="bg-red-700 text-white px-4 py-2 rounded-md hover:bg-red-800 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="bg-red-700 text-white px-4 py-2 rounded-md hover:bg-red-800 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer font-medium"
             >
               {isLoading ? "Checking in..." : "Check In"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIdNumber("");
+                setKioskMode("event-selection");
+              }}
+              disabled={isLoading || showSuccess}
+              className="bg-gray-300 text-gray-800 px-4 py-2 rounded-md hover:bg-gray-400 transition-all duration-300 text-center font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Back
             </button>
           </div>
         </form>

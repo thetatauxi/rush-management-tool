@@ -70,6 +70,8 @@ export default function VoteDashboard() {
   const [countdownSeconds, setCountdownSeconds] = useState<number | null>(null);
   const [appCommitteeEnabled, setAppCommitteeEnabled] = useState(false);
   const isClosingRef = useRef(false);
+  const votingSubmittingRef = useRef<Set<string>>(new Set());
+  const feedbackCacheRef = useRef<Record<string, any[]>>({});
 
   // Setup Modal States
   const [showSetupModal, setShowSetupModal] = useState(false);
@@ -675,6 +677,21 @@ export default function VoteDashboard() {
 
     fetchRoundCounts();
 
+    const handleFocus = () => {
+      fetchRoundCounts();
+    };
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("online", handleFocus);
+
+    // Regular members do not display live Yes/No/Abstain tallies during voting.
+    // Only admins need a live Realtime subscription to the tally table.
+    if (!isStrictAdmin) {
+      return () => {
+        window.removeEventListener("focus", handleFocus);
+        window.removeEventListener("online", handleFocus);
+      };
+    }
+
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const debouncedFetch = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -709,19 +726,20 @@ export default function VoteDashboard() {
       )
       .subscribe();
 
-    const handleFocus = () => {
-      fetchRoundCounts();
-    };
-    window.addEventListener("focus", handleFocus);
-    window.addEventListener("online", handleFocus);
-
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener("online", handleFocus);
     };
-  }, [votingSection, votingRound, currentTableName, fetchRoundCounts]);
+  }, [votingSection, votingRound, currentTableName, fetchRoundCounts, isStrictAdmin]);
+
+  // When round completes, sync latest evaluated statuses for all users
+  useEffect(() => {
+    if (roundStatus === "completed") {
+      fetchRoundCounts();
+    }
+  }, [roundStatus, fetchRoundCounts]);
 
   // Filtered and Sorted PNMs list
   // Note: For presentation rounds (S1 R2, S2 R1, S2 R2, S2 R3), only candidates who are "in contest"
@@ -1273,25 +1291,34 @@ export default function VoteDashboard() {
     }
   };
 
-  // Cast Vote Handler
+  // Cast Vote Handler with Instant Optimistic UI and Double-Click Protection
   const handleVote = async (studentId: string, type: VoteType) => {
     if (!userId) {
       toast.error("User session not found.");
       return;
     }
 
+    if (votingSubmittingRef.current.has(studentId)) {
+      return;
+    }
+
+    if (
+      roundStatus !== "in_progress" ||
+      (votingStatus !== "open" && votingStatus !== "closing")
+    ) {
+      toast.error("Voting is not currently open for this round.");
+      return;
+    }
+
+    const currentVote = votes[studentId] || null;
+    const targetVote = currentVote === type ? null : type;
+
+    // Instant zero-latency optimistic local update
+    const previousVotes = votes;
+    setVotes({ ...votes, [studentId]: targetVote });
+    votingSubmittingRef.current.add(studentId);
+
     try {
-      if (
-        roundStatus !== "in_progress" ||
-        (votingStatus !== "open" && votingStatus !== "closing")
-      ) {
-        toast.error("Voting is not currently open for this round.");
-        return;
-      }
-
-      const currentVote = votes[studentId] || null;
-      const targetVote = currentVote === type ? null : type;
-
       const { error } = await supabase.rpc("cast_vote", {
         p_student_id: String(studentId),
         p_user_id: String(userId),
@@ -1305,10 +1332,10 @@ export default function VoteDashboard() {
         throw error;
       }
 
-      const updatedVotes = { ...votes, [studentId]: targetVote };
-      setVotes(updatedVotes);
-
-      fetchRoundCounts();
+      // Only admins need to re-query round tallies
+      if (isStrictAdmin) {
+        fetchRoundCounts();
+      }
 
       if (targetVote === null) {
         toast.info("Vote cleared");
@@ -1316,9 +1343,15 @@ export default function VoteDashboard() {
         toast.success("Vote submitted");
       }
     } catch (err: unknown) {
+      // Revert optimistic update on failure
+      setVotes(previousVotes);
       const errorObj = err as { message?: string; details?: string; hint?: string };
       console.error("Error casting vote:", err);
       toast.error(errorObj?.message || errorObj?.details || "Failed to cast vote. Please run updated SQL.");
+    } finally {
+      setTimeout(() => {
+        votingSubmittingRef.current.delete(studentId);
+      }, 250);
     }
   };
 
@@ -1330,7 +1363,12 @@ export default function VoteDashboard() {
     fetchFeedbackList(pnm.student_id);
   };
 
-  const fetchFeedbackList = async (studentId: string) => {
+  const fetchFeedbackList = async (studentId: string, force = false) => {
+    if (!studentId) return;
+    if (!force && feedbackCacheRef.current[studentId]) {
+      setFeedbackList(feedbackCacheRef.current[studentId]);
+      return;
+    }
     try {
       const { data, error } = await supabase
         .from("pnm_feedback")
@@ -1339,7 +1377,9 @@ export default function VoteDashboard() {
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      setFeedbackList(data || []);
+      const list = data || [];
+      feedbackCacheRef.current[studentId] = list;
+      setFeedbackList(list);
     } catch (err) {
       console.error("Error loading feedback list:", err);
     }
@@ -1355,9 +1395,12 @@ export default function VoteDashboard() {
 
       if (error) throw error;
 
-      setFeedbackList((prev) =>
-        prev.map((fb) => (fb.id === feedbackId ? { ...fb, is_approved: newValue } : fb))
-      );
+      const updated = feedbackList.map((fb) => (fb.id === feedbackId ? { ...fb, is_approved: newValue } : fb));
+      setFeedbackList(updated);
+      const currentStudentId = activePnm?.student_id || selectedPnmForDetails?.student_id;
+      if (currentStudentId) {
+        feedbackCacheRef.current[currentStudentId] = updated;
+      }
       fetchPendingFeedback();
     } catch (err) {
       console.error("Error toggling approval status:", err);
@@ -1377,7 +1420,12 @@ export default function VoteDashboard() {
 
       if (error) throw error;
 
-      setFeedbackList((prev) => prev.filter((fb) => fb.id !== feedbackId));
+      const updated = feedbackList.filter((fb) => fb.id !== feedbackId);
+      setFeedbackList(updated);
+      const currentStudentId = activePnm?.student_id || selectedPnmForDetails?.student_id;
+      if (currentStudentId) {
+        feedbackCacheRef.current[currentStudentId] = updated;
+      }
       toast.success("Feedback deleted successfully.");
       fetchPendingFeedback();
     } catch (err) {
@@ -1430,7 +1478,7 @@ export default function VoteDashboard() {
       setNewFeedbackComment("");
       setNewFeedbackType("Positive");
 
-      fetchFeedbackList(targetStudentId);
+      fetchFeedbackList(targetStudentId, true);
       fetchPendingFeedback();
     } catch (err) {
       console.error("Error submitting feedback:", err);
@@ -1698,7 +1746,7 @@ export default function VoteDashboard() {
                       : "bg-zinc-100 border border-zinc-300 text-zinc-650 hover:bg-zinc-200"
                       }`}
                   >
-                    Appl./Inte.: {appComLive ? "LIVE" : "OFF"}
+                    App/Int: {appComLive ? "LIVE" : "OFF"}
                   </button>
                   <button
                     onClick={handleToggleInviteBidListShown}
@@ -4160,10 +4208,10 @@ export default function VoteDashboard() {
                       <div className="flex items-center gap-2">
                         <span
                           className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider ${fb.is_approved === 1
-                              ? "bg-green-100 text-green-700 border border-green-200"
-                              : fb.is_approved === -1
-                                ? "bg-red-100 text-red-700 border border-red-200"
-                                : "bg-amber-100 text-amber-700 border border-amber-200"
+                            ? "bg-green-100 text-green-700 border border-green-200"
+                            : fb.is_approved === -1
+                              ? "bg-red-100 text-red-700 border border-red-200"
+                              : "bg-amber-100 text-amber-700 border border-amber-200"
                             }`}
                         >
                           {fb.is_approved === 1 ? "Approved" : fb.is_approved === -1 ? "Declined" : "Pending"}

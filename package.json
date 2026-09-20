@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "stress-test": "node scripts/stress-test.mjs"
   },
   "dependencies": {
     "@paper-design/shaders-react": "^0.0.69",
