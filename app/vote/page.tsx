@@ -51,6 +51,7 @@ export default function VoteDashboard() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isRushChair, setIsRushChair] = useState(false);
   const [isRushCommittee, setIsRushCommittee] = useState(false);
+  const [isAuthorized, setIsAuthorized] = useState(false);
   const [votingSection, setVotingSection] = useState<number>(1); // 1: Invite Voting, 2: Bid Voting
   const [votingRound, setVotingRound] = useState<number>(1);
   const [selectedRegentSection, setSelectedRegentSection] = useState<number>(1);
@@ -169,8 +170,10 @@ export default function VoteDashboard() {
   // Current round table name
   const currentTableName = `voting-s${votingSection}-r${votingRound}`;
 
-  // Fetch dynamic voting thresholds
+  // Fetch dynamic voting thresholds (Admins and Rush Chairs only)
   useEffect(() => {
+    if (checkingAuth || !isAuthorized) return;
+
     async function fetchThresholds() {
       try {
         const { data } = await supabase.from("voting-thresholds").select("*");
@@ -186,60 +189,73 @@ export default function VoteDashboard() {
       }
     }
     fetchThresholds();
-  }, []);
+  }, [checkingAuth, isAuthorized]);
 
-  // Verify auth session
+  // Verify auth session and member role permissions
   useEffect(() => {
     async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        router.push("/login");
-      } else {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          router.push("/login");
+          return;
+        }
+
         setUserId(session.user.id);
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, first_name, last_name")
+          .eq("id", session.user.id)
+          .maybeSingle();
+
+        const role = (profile?.role || "").toLowerCase().trim();
+        const isAdminRole =
+          role === "regent" ||
+          role === "vice regent" ||
+          role === "vr" ||
+          role === "website chair" ||
+          role === "admin";
+        const isRushChairRole =
+          role === "rush chair" ||
+          role === "rush chairs" ||
+          role === "rush_chair";
+        const isRushCommitteeRole = role === "rush committee";
+
+        const authorized = isAdminRole || isRushChairRole;
+
+        setIsAdmin(isAdminRole);
+        setIsRushChair(isRushChairRole);
+        setIsRushCommittee(isRushCommitteeRole);
+        setHasViewFeedbackPrivilege(authorized);
+
+        const first = profile?.first_name || "";
+        const last = profile?.last_name || "";
+        setUserFullName(`${first} ${last}`.trim() || "User");
+        setUserFirstName(first || "Brother");
+        setUserRole(profile?.role || "Member");
+
+        setIsAuthorized(authorized);
         setCheckingAuth(false);
+
+        if (!authorized) {
+          toast.error("Access restricted: The voting dashboard is only accessible to Admins and Rush Chairs.");
+          router.replace("/");
+        }
+      } catch (err) {
+        console.error("Error checking auth:", err);
+        router.push("/login");
       }
     }
     checkAuth();
   }, [router]);
 
-  // Load PNMs and User Profile from Supabase
+  // Load PNMs from Supabase (Only for authorized Admins and Rush Chairs)
   useEffect(() => {
-    if (checkingAuth) return;
+    if (checkingAuth || !isAuthorized) return;
 
-    async function fetchPnmsAndRole() {
+    async function fetchPnms() {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("role, first_name, last_name")
-            .eq("id", session.user.id)
-            .maybeSingle();
-
-          if (profile) {
-            const role = (profile.role || "").toLowerCase().trim();
-            const isAdminRole =
-              role === "regent" ||
-              role === "vice regent" ||
-              role === "vr" ||
-              role === "website chair" ||
-              role === "admin";
-            const isRushChairRole = role === "rush chair";
-            const isRushCommitteeRole = role === "rush committee";
-
-            setIsAdmin(isAdminRole);
-            setIsRushChair(isRushChairRole);
-            setIsRushCommittee(isRushCommitteeRole);
-            setHasViewFeedbackPrivilege(isAdminRole || isRushChairRole);
-
-            const first = profile.first_name || "";
-            const last = profile.last_name || "";
-            setUserFullName(`${first} ${last}`.trim() || "User");
-            setUserFirstName(first || "Brother");
-            setUserRole(profile.role || "Member");
-          }
-        }
-
         const { data, error } = await supabase
           .from("pnms")
           .select("*")
@@ -257,8 +273,8 @@ export default function VoteDashboard() {
       }
     }
 
-    fetchPnmsAndRole();
-  }, [checkingAuth]);
+    fetchPnms();
+  }, [checkingAuth, isAuthorized]);
 
   // Load and refresh pending feedback IDs (for rush chairs and admin)
   const fetchPendingFeedback = async () => {
@@ -278,7 +294,7 @@ export default function VoteDashboard() {
   };
 
   useEffect(() => {
-    if (checkingAuth || !hasViewFeedbackPrivilege) return;
+    if (checkingAuth || !isAuthorized || !hasViewFeedbackPrivilege) return;
 
     fetchPendingFeedback();
 
@@ -296,11 +312,11 @@ export default function VoteDashboard() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [checkingAuth, hasViewFeedbackPrivilege]);
+  }, [checkingAuth, isAuthorized, hasViewFeedbackPrivilege]);
 
   // Load initial voting ops state and subscribe to real-time updates
   useEffect(() => {
-    if (checkingAuth) return;
+    if (checkingAuth || !isAuthorized) return;
 
     async function fetchInitialOps() {
       try {
@@ -397,11 +413,11 @@ export default function VoteDashboard() {
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener("online", handleFocus);
     };
-  }, [checkingAuth]);
+  }, [checkingAuth, isAuthorized]);
 
   // Fetch current user's votes from database whenever active section, round, or userId changes
   useEffect(() => {
-    if (!userId || !votingSection || !votingRound) return;
+    if (checkingAuth || !isAuthorized || !userId || !votingSection || !votingRound) return;
 
     async function fetchUserVotes() {
       try {
@@ -427,7 +443,7 @@ export default function VoteDashboard() {
     }
 
     fetchUserVotes();
-  }, [userId, votingSection, votingRound]);
+  }, [checkingAuth, isAuthorized, userId, votingSection, votingRound]);
 
   // Fetch and subscribe to round counts and candidate statuses for the active round
   const fetchRoundCounts = useCallback(async () => {
@@ -673,7 +689,7 @@ export default function VoteDashboard() {
   };
 
   useEffect(() => {
-    if (!votingSection || !votingRound) return;
+    if (checkingAuth || !isAuthorized || !votingSection || !votingRound) return;
 
     fetchRoundCounts();
 
@@ -732,14 +748,15 @@ export default function VoteDashboard() {
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener("online", handleFocus);
     };
-  }, [votingSection, votingRound, currentTableName, fetchRoundCounts, isStrictAdmin]);
+  }, [checkingAuth, isAuthorized, votingSection, votingRound, currentTableName, fetchRoundCounts, isStrictAdmin]);
 
   // When round completes, sync latest evaluated statuses for all users
   useEffect(() => {
+    if (checkingAuth || !isAuthorized) return;
     if (roundStatus === "completed") {
       fetchRoundCounts();
     }
-  }, [roundStatus, fetchRoundCounts]);
+  }, [checkingAuth, isAuthorized, roundStatus, fetchRoundCounts]);
 
   // Filtered and Sorted PNMs list
   // Note: For presentation rounds (S1 R2, S2 R1, S2 R2, S2 R3), only candidates who are "in contest"
@@ -969,16 +986,17 @@ export default function VoteDashboard() {
 
   // Fetch feedback when active PNM changes in presentation mode
   useEffect(() => {
+    if (checkingAuth || !isAuthorized) return;
     if (isPresentationRound && activePnm) {
       fetchFeedbackList(activePnm.student_id);
       setIsEditing(false);
       setEditedValues({ ...activePnm });
     }
-  }, [isPresentationRound, activePnm?.student_id]);
+  }, [checkingAuth, isAuthorized, isPresentationRound, activePnm?.student_id]);
 
   // Display the countdown locally, but let the database decide when it has elapsed.
   useEffect(() => {
-    if (!closingEndsAt) {
+    if (checkingAuth || !isAuthorized || !closingEndsAt) {
       setCountdownSeconds(null);
       isClosingRef.current = false;
       return;
@@ -1037,7 +1055,7 @@ export default function VoteDashboard() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [closingEndsAt, votingSection, votingRound, fetchRoundCounts, isStrictAdmin]);
+  }, [checkingAuth, isAuthorized, closingEndsAt, votingSection, votingRound, fetchRoundCounts, isStrictAdmin]);
 
   // Stats calculation
   const stats = useMemo(() => {
@@ -1549,8 +1567,36 @@ export default function VoteDashboard() {
 
   if (checkingAuth) {
     return (
-      <div className="flex min-h-screen items-center justify-center font-sans">
-        <div className="text-xl font-medium text-gray-600">Loading session...</div>
+      <div className="flex min-h-screen items-center justify-center font-sans bg-zinc-950 text-white">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 border-4 border-red-600 border-t-transparent rounded-full animate-spin" />
+          <div className="text-base font-medium text-zinc-400">Verifying authorization...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthorized) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 font-sans p-4 text-white">
+        <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-xl p-8 text-center shadow-2xl">
+          <div className="w-16 h-16 bg-red-950/60 border border-red-500/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold font-mono text-zinc-100 mb-2">Access Restricted</h1>
+          <p className="text-zinc-400 text-sm mb-6 leading-relaxed">
+            The voting dashboard is restricted to Chapter Administrators and Rush Chairs. Members do not have access to deliberations, feedback, or voting.
+          </p>
+          <Link
+            href="/"
+            className="inline-block bg-red-700 hover:bg-red-800 text-white font-semibold px-6 py-2.5 rounded-lg transition-all shadow-md hover:shadow-lg"
+          >
+            Return to Dashboard
+          </Link>
+        </div>
       </div>
     );
   }

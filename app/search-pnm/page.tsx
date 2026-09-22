@@ -70,6 +70,7 @@ export default function SearchPnmPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isRushChair, setIsRushChair] = useState(false);
   const [isRushCommittee, setIsRushCommittee] = useState(false);
+  const [isAuthorized, setIsAuthorized] = useState(false);
   const [hasViewFeedbackPrivilege, setHasViewFeedbackPrivilege] = useState(false);
   const [appCommitteeEnabled, setAppCommitteeEnabled] = useState(false);
   const [pendingFeedbackPnmIds, setPendingFeedbackPnmIds] = useState<Set<string>>(new Set());
@@ -99,57 +100,69 @@ export default function SearchPnmPage() {
   const [newFeedbackType, setNewFeedbackType] = useState<"Positive" | "Negative" | "Other" | "Veto">("Positive");
   const [newFeedbackComment, setNewFeedbackComment] = useState("");
 
-  // Auth verification
+  // Auth verification and role checking (Restricted to Admins and Rush Chairs)
   useEffect(() => {
     async function checkAuth() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        router.push("/login");
-      } else {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          router.push("/login");
+          return;
+        }
+
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, first_name, last_name")
+          .eq("id", session.user.id)
+          .maybeSingle();
+
+        const role = (profile?.role || "").toLowerCase().trim();
+        const isAdminRole =
+          role === "regent" ||
+          role === "vice regent" ||
+          role === "vr" ||
+          role === "website chair" ||
+          role === "admin";
+        const isRushChairRole =
+          role === "rush chair" ||
+          role === "rush chairs" ||
+          role === "rush_chair";
+        const isRushCommitteeRole = role === "rush committee";
+
+        const authorized = isAdminRole || isRushChairRole;
+
+        setIsAdmin(isAdminRole);
+        setIsRushChair(isRushChairRole);
+        setIsRushCommittee(isRushCommitteeRole);
+        setHasViewFeedbackPrivilege(authorized);
+
+        const first = profile?.first_name || "";
+        const last = profile?.last_name || "";
+        setUserFullName(`${first} ${last}`.trim() || "Brother");
+        setUserFirstName(first || "Brother");
+        setUserRole(profile?.role || "Member");
+
+        setIsAuthorized(authorized);
         setCheckingAuth(false);
+
+        if (!authorized) {
+          toast.error("Access restricted: Search PNM directory is only accessible to Admins and Rush Chairs.");
+          router.replace("/");
+        }
+      } catch (err) {
+        console.error("Auth check failed:", err);
+        router.push("/login");
       }
     }
     checkAuth();
   }, [router]);
 
-  // Load PNMs, user role, voting ops settings, and existing review splits
+  // Load PNMs, voting ops settings, and existing review splits (Authorized only)
   useEffect(() => {
-    if (checkingAuth) return;
+    if (checkingAuth || !isAuthorized) return;
 
     async function fetchData() {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          const { data: profile } = await supabase
-            .from("profiles")
-            .select("role, first_name, last_name")
-            .eq("id", session.user.id)
-            .maybeSingle();
-
-          if (profile) {
-            const role = (profile.role || "").toLowerCase().trim();
-            const isAdminRole =
-              role === "regent" ||
-              role === "vice regent" ||
-              role === "vr" ||
-              role === "website chair" ||
-              role === "admin";
-            const isRushChairRole = role === "rush chair";
-            const isRushCommitteeRole = role === "rush committee";
-
-            setIsAdmin(isAdminRole);
-            setIsRushChair(isRushChairRole);
-            setIsRushCommittee(isRushCommitteeRole);
-            setHasViewFeedbackPrivilege(isAdminRole || isRushChairRole);
-
-            const first = profile.first_name || "";
-            const last = profile.last_name || "";
-            setUserFullName(`${first} ${last}`.trim() || "Brother");
-            setUserFirstName(first || "Brother");
-            setUserRole(profile.role || "Member");
-          }
-        }
-
         // Fetch ops for app_committee_enabled
         const { data: opsData } = await supabase
           .from("voting-ops")
@@ -231,7 +244,7 @@ export default function SearchPnmPage() {
     }
 
     fetchData();
-  }, [checkingAuth]);
+  }, [checkingAuth, isAuthorized]);
 
   // Load and refresh pending feedback IDs (for rush chairs and admin)
   const fetchPendingFeedback = async () => {
@@ -251,7 +264,7 @@ export default function SearchPnmPage() {
   };
 
   useEffect(() => {
-    if (checkingAuth || !hasViewFeedbackPrivilege) return;
+    if (checkingAuth || !isAuthorized || !hasViewFeedbackPrivilege) return;
 
     fetchPendingFeedback();
 
@@ -269,11 +282,11 @@ export default function SearchPnmPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [checkingAuth, hasViewFeedbackPrivilege]);
+  }, [checkingAuth, isAuthorized, hasViewFeedbackPrivilege]);
 
   // Real-time listener for voting-ops (app_committee_enabled live state)
   useEffect(() => {
-    if (checkingAuth) return;
+    if (checkingAuth || !isAuthorized) return;
 
     const opsChannel = supabase
       .channel("voting-ops-search-app-com")
@@ -291,7 +304,7 @@ export default function SearchPnmPage() {
     return () => {
       supabase.removeChannel(opsChannel);
     };
-  }, [checkingAuth]);
+  }, [checkingAuth, isAuthorized]);
 
   // Load and refresh invitee IDs (candidates approved in Section 1 or present in Section 2)
   const fetchInviteeIds = useCallback(async () => {
@@ -323,9 +336,9 @@ export default function SearchPnmPage() {
 
   // Fetch invitees on initial load only (no real-time polling during active voting)
   useEffect(() => {
-    if (checkingAuth) return;
+    if (checkingAuth || !isAuthorized) return;
     fetchInviteeIds();
-  }, [checkingAuth, fetchInviteeIds]);
+  }, [checkingAuth, isAuthorized, fetchInviteeIds]);
 
   // Handle toggling the "Show Invitees" filter
   const handleToggleShowInvitees = async () => {
@@ -762,8 +775,36 @@ export default function SearchPnmPage() {
 
   if (checkingAuth) {
     return (
-      <div className="flex min-h-screen items-center justify-center font-sans">
-        <div className="text-xl font-medium text-gray-600">Loading session...</div>
+      <div className="flex min-h-screen items-center justify-center font-sans bg-zinc-950 text-white">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 border-4 border-red-600 border-t-transparent rounded-full animate-spin" />
+          <div className="text-base font-medium text-zinc-400">Verifying authorization...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthorized) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 font-sans p-4 text-white">
+        <div className="max-w-md w-full bg-zinc-900 border border-zinc-800 rounded-xl p-8 text-center shadow-2xl">
+          <div className="w-16 h-16 bg-red-950/60 border border-red-500/30 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold font-mono text-zinc-100 mb-2">Access Restricted</h1>
+          <p className="text-zinc-400 text-sm mb-6 leading-relaxed">
+            The candidate directory, comments, feedback, and photos are restricted to Chapter Administrators and Rush Chairs.
+          </p>
+          <Link
+            href="/"
+            className="inline-block bg-red-700 hover:bg-red-800 text-white font-semibold px-6 py-2.5 rounded-lg transition-all shadow-md hover:shadow-lg"
+          >
+            Return to Dashboard
+          </Link>
+        </div>
       </div>
     );
   }

@@ -41,6 +41,17 @@ export default function Home() {
     );
   }
 
+  const normalizedRole = userRole.toLowerCase().trim();
+  const canAccessVoting =
+    normalizedRole === "regent" ||
+    normalizedRole === "vice regent" ||
+    normalizedRole === "vr" ||
+    normalizedRole === "website chair" ||
+    normalizedRole === "admin" ||
+    normalizedRole === "rush chair" ||
+    normalizedRole === "rush chairs" ||
+    normalizedRole === "rush_chair";
+
   return (
     <div className="relative flex min-h-screen items-center justify-center font-sans p-4">
       <div className="w-full md:w-1/2 flex flex-col gap-6 relative z-10">
@@ -77,18 +88,22 @@ export default function Home() {
           </div>
 
           <div className="mt-5 flex flex-col gap-3">
-            <Link
-              href={"/vote"}
-              className="block text-center bg-red-700 text-white px-4 py-3 rounded-md hover:bg-red-950 transition-all duration-300 font-bold text-lg shadow-md hover:shadow-lg hover:-translate-y-0.5"
-            >
-              Go to Voting Dashboard
-            </Link>
-            <Link
-              href={"/search-pnm"}
-              className="block text-center bg-zinc-800 text-white px-4 py-2.5 rounded-md hover:bg-zinc-900 transition-all duration-300 font-semibold shadow-sm text-base hover:-translate-y-0.5"
-            >
-              Search PNM
-            </Link>
+            {canAccessVoting && (
+              <Link
+                href={"/vote"}
+                className="block text-center bg-red-700 text-white px-4 py-3 rounded-md hover:bg-red-950 transition-all duration-300 font-bold text-lg shadow-md hover:shadow-lg hover:-translate-y-0.5"
+              >
+                Go to Voting Dashboard
+              </Link>
+            )}
+            {canAccessVoting && (
+              <Link
+                href={"/search-pnm"}
+                className="block text-center bg-zinc-800 text-white px-4 py-2.5 rounded-md hover:bg-zinc-900 transition-all duration-300 font-semibold shadow-sm text-base hover:-translate-y-0.5"
+              >
+                Search PNM
+              </Link>
+            )}
             <Link
               href={"/quick-feedback"}
               className="block text-center bg-zinc-200 text-zinc-850 border border-zinc-300/80 px-4 py-2.5 rounded-md hover:bg-zinc-300 transition-all duration-300 font-semibold shadow-sm text-base"
